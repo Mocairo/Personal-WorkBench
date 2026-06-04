@@ -1,0 +1,39 @@
+@startuml
+title Agent 工具权限与执行链路
+
+skinparam shadowing false
+
+actor 用户 as User
+participant "Agent Chat" as Chat
+participant "Agent Runtime" as Runtime
+participant "Tool Registry" as Registry
+participant "Permission Gate" as Gate
+participant "Audit Logger" as Audit
+participant "Tool Executor" as Executor
+participant "Local Adapter" as Adapter
+
+User -> Chat: 请求 Agent 执行任务
+Chat -> Runtime: sendMessage()
+Runtime -> Registry: 获取工具定义
+Registry --> Runtime: toolId + permissionLevel + schema
+Runtime -> Gate: 校验工具、参数、上下文和 Agent 策略
+
+alt Level 0/1 允许
+  Gate -> Audit: 记录允许
+  Runtime -> Executor: execute(toolCall)
+  Executor -> Adapter: 调用本地能力
+  Adapter --> Executor: 返回结果
+  Executor --> Runtime: 工具结果
+else Level 2 需要模块授权
+  Gate -> Audit: 记录需授权
+  Gate --> Runtime: requestApproval
+  Runtime --> Chat: 展示确认
+else Level 3/4 默认拒绝或强确认
+  Gate -> Audit: 记录拒绝
+  Gate --> Runtime: permission denied
+  Runtime --> Chat: 展示拒绝原因
+end
+
+Runtime -> Audit: 记录最终结果
+
+@enduml

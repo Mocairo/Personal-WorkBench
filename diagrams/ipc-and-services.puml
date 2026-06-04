@@ -1,0 +1,107 @@
+@startuml
+title Preload API / IPC / 本地服务通信图
+
+skinparam componentStyle rectangle
+skinparam shadowing false
+
+actor "Renderer 页面与组件" as Renderer
+
+package "Preload API" {
+  [window.api.kb]
+  [window.api.codeRepo]
+  [window.api.agent]
+  [window.api.intel]
+  [window.api.music]
+  [window.api.voice]
+  [window.api.system]
+}
+
+package "IPC Channels" {
+  [kb:*]
+  [codeRepo:*]
+  [agent:*]
+  [intel:*]
+  [music:*]
+  [voice:*]
+  [system:*]
+}
+
+package "Electron 主进程 Handlers" {
+  [KbIpcHandler]
+  [CodeRepoIpcHandler]
+  [AgentIpcHandler]
+  [IntelIpcHandler]
+  [MusicIpcHandler]
+  [VoiceIpcHandler]
+  [SystemIpcHandler]
+}
+
+package "本地能力 Adapters" {
+  [Knowledge Adapter]
+  [Git Adapter]
+  [File Adapter]
+  [Process Adapter]
+  [LLM Provider Adapter]
+  [local-intel Service Adapter]
+  [Music Adapter]
+  [Voice Adapter]
+  [App DB Adapter]
+}
+
+Renderer --> [window.api.kb]
+Renderer --> [window.api.codeRepo]
+Renderer --> [window.api.agent]
+Renderer --> [window.api.intel]
+Renderer --> [window.api.music]
+Renderer --> [window.api.voice]
+Renderer --> [window.api.system]
+
+[window.api.kb] --> [kb:*]
+[window.api.codeRepo] --> [codeRepo:*]
+[window.api.agent] --> [agent:*]
+[window.api.intel] --> [intel:*]
+[window.api.music] --> [music:*]
+[window.api.voice] --> [voice:*]
+[window.api.system] --> [system:*]
+
+[kb:*] --> [KbIpcHandler]
+[codeRepo:*] --> [CodeRepoIpcHandler]
+[agent:*] --> [AgentIpcHandler]
+[intel:*] --> [IntelIpcHandler]
+[music:*] --> [MusicIpcHandler]
+[voice:*] --> [VoiceIpcHandler]
+[system:*] --> [SystemIpcHandler]
+
+[KbIpcHandler] --> [Knowledge Adapter]
+[KbIpcHandler] --> [LLM Provider Adapter]
+[KbIpcHandler] --> [App DB Adapter]
+
+[CodeRepoIpcHandler] --> [Git Adapter]
+[CodeRepoIpcHandler] --> [File Adapter]
+[CodeRepoIpcHandler] --> [Process Adapter]
+[CodeRepoIpcHandler] --> [LLM Provider Adapter]
+
+[AgentIpcHandler] --> [LLM Provider Adapter]
+[AgentIpcHandler] --> [Knowledge Adapter]
+[AgentIpcHandler] --> [Git Adapter]
+[AgentIpcHandler] --> [local-intel Service Adapter]
+[AgentIpcHandler] --> [App DB Adapter]
+
+[IntelIpcHandler] --> [local-intel Service Adapter]
+[IntelIpcHandler] --> [Process Adapter]
+
+[MusicIpcHandler] --> [Music Adapter]
+[MusicIpcHandler] --> [App DB Adapter]
+
+[VoiceIpcHandler] --> [Voice Adapter]
+[VoiceIpcHandler] --> [LLM Provider Adapter]
+
+[SystemIpcHandler] --> [File Adapter]
+[SystemIpcHandler] --> [Process Adapter]
+
+note right of Renderer
+Renderer 只通过 window.api.* 调用能力。
+不直接访问 Node、文件系统、Git、数据库或 API Key。
+end note
+
+@enduml

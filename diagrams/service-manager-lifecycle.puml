@@ -1,0 +1,48 @@
+@startuml
+title Service Manager 本地服务生命周期
+
+skinparam shadowing false
+
+actor 用户 as User
+participant "Renderer" as Renderer
+participant "window.api.intel/system" as Api
+participant "IPC Router" as Ipc
+participant "Service Manager" as Manager
+participant "Process Adapter" as Process
+participant "local-intel Scripts" as Scripts
+participant "Health Checker" as Health
+database "App SQLite" as DB
+
+User -> Renderer: 点击启动 local-intel
+Renderer -> Api: startService()
+Api -> Ipc: intel:service:start
+Ipc -> Manager: start(local-intel)
+Manager -> DB: 写入 starting 状态
+Manager -> Process: 执行 start_local_intel.ps1
+Process -> Scripts: 启动 web + scheduler
+Scripts --> Process: 返回进程/日志信息
+Manager -> Health: 检查端口、PID、状态脚本
+Health --> Manager: running / degraded / error
+Manager -> DB: 写入状态和错误摘要
+Manager --> Ipc: ApiResult<ServiceStatus>
+Ipc --> Api: 返回结果
+Api --> Renderer: 更新页面状态
+Renderer --> User: 展示运行状态
+
+== 周期性健康检查 ==
+Manager -> Health: poll()
+Health --> Manager: 状态变化
+Manager -> DB: 更新 ServiceStatus
+Manager -> Renderer: service:event
+
+== 停止服务 ==
+User -> Renderer: 点击停止
+Renderer -> Api: stopService()
+Api -> Ipc: intel:service:stop
+Ipc -> Manager: stop(local-intel)
+Manager -> Process: 执行 stop_local_intel.ps1
+Process -> Scripts: 停止服务
+Manager -> Health: 确认停止
+Manager -> DB: 写入 stopped 状态
+
+@enduml

@@ -1,0 +1,71 @@
+@startuml
+title 核心模块边界上下文图
+
+skinparam componentStyle rectangle
+skinparam shadowing false
+
+package "Core Shell" {
+  [Desktop Shell]
+  [Task Center]
+  [Settings]
+}
+
+package "Core Workspaces" {
+  [Knowledge Base]
+  [Code Repository]
+  [Agent Chat]
+  [Agent Management]
+  [情报中心]
+}
+
+package "Extension Workspaces" {
+  [Local Music]
+  [Voice Assistant]
+  [Widgets]
+}
+
+package "Shared Platform Services" {
+  [Preload API]
+  [IPC Router]
+  [Service Manager]
+  [App SQLite]
+  [Vector Store]
+  [LLM Provider Adapter]
+  [Permission Gate]
+  [Secrets Store]
+}
+
+[Desktop Shell] --> [Task Center]
+[Desktop Shell] --> [Settings]
+[Desktop Shell] --> [Knowledge Base]
+[Desktop Shell] --> [Code Repository]
+[Desktop Shell] --> [Agent Chat]
+[Desktop Shell] --> [Agent Management]
+[Desktop Shell] --> [情报中心]
+[Desktop Shell] --> [Local Music]
+[Desktop Shell] --> [Voice Assistant]
+[Desktop Shell] --> [Widgets]
+
+[Knowledge Base] --> [Preload API]
+[Code Repository] --> [Preload API]
+[Agent Chat] --> [Preload API]
+[Agent Management] --> [Preload API]
+[情报中心] --> [Preload API]
+[Local Music] --> [Preload API]
+[Voice Assistant] --> [Preload API]
+[Widgets] --> [Preload API]
+
+[Preload API] --> [IPC Router]
+[IPC Router] --> [Permission Gate]
+[IPC Router] --> [Service Manager]
+[IPC Router] --> [App SQLite]
+[IPC Router] --> [Vector Store]
+[IPC Router] --> [LLM Provider Adapter]
+[IPC Router] --> [Secrets Store]
+
+note right of [Permission Gate]
+Agent、语音和小组件使用本地能力时，
+必须通过权限策略。
+end note
+
+@enduml

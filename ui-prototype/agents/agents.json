@@ -1,0 +1,25 @@
+{
+  "agents": [
+    {
+      "name": "Repo Analyst",
+      "state": "online",
+      "tools": ["git", "parser", "terminal"]
+    },
+    {
+      "name": "Knowledge Curator",
+      "state": "idle",
+      "tools": ["rag", "markdown", "index"]
+    },
+    {
+      "name": "Intel Watcher",
+      "state": "online",
+      "tools": ["local-intel", "digest", "report"]
+    },
+    {
+      "name": "Music Librarian",
+      "state": "paused",
+      "tools": ["metadata", "playlist"]
+    }
+  ],
+  "permissionMetrics": ["File read", "Command execution", "Network access", "Model calls"]
+}

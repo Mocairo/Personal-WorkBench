@@ -1,0 +1,444 @@
+import { describe, expect, it } from "vitest";
+import {
+  getChatStatusSummary,
+  getComposerSendState,
+  getContextRows,
+  getTimelineRows,
+  getToolApprovalState,
+  mergeDryRunResultIntoChatData,
+  mergeSendErrorIntoChatData,
+  mergeStreamEventIntoChatData,
+  mergeStreamResultIntoChatData,
+  mergeStreamStartIntoChatData,
+  mergeTextSendResultIntoChatData,
+} from "./AgentChat";
+
+describe("AgentChat page data binding helpers", () => {
+  it("keeps rich context metadata from local sessions", () => {
+    const rows = getContextRows([
+      {
+        chunks: 8,
+        title: "docs/agent.md",
+        tokens: "2.4k",
+        type: "doc",
+        updatedAt: "2026-06-03T10:00:00.000Z",
+      },
+    ]);
+
+    expect(rows[0]).toMatchObject({
+      active: true,
+      chunks: 8,
+      title: "docs/agent.md",
+      tokens: "2.4k",
+      type: "doc",
+      updated: "2026-06-03T10:00:00.000Z",
+    });
+  });
+
+  it("keeps tool-call duration and permission details from local sessions", () => {
+    const rows = getTimelineRows([
+      {
+        duration: "320ms",
+        meta: "docs/agent.md",
+        permission: "read allowed",
+        state: "done",
+        title: "Read config",
+      },
+    ]);
+
+    expect(rows[0]).toMatchObject({
+      duration: "320ms",
+      meta: "docs/agent.md",
+      permission: "read allowed",
+      state: "done",
+      title: "Read config",
+    });
+  });
+
+  it("identifies pending Level 1 tools without allowing denied elevated tools", () => {
+    expect(
+      getToolApprovalState([
+        { permissionLevel: 1, state: "pending", title: "Knowledge Search", toolId: "kb.searchLocal" },
+        { permissionLevel: 4, state: "denied", title: "Shell Command", toolId: "shell.exec" },
+      ]),
+    ).toEqual({
+      canApproveAllLevel1: true,
+      hasPendingLevel1: true,
+      pendingLevel1ToolIds: ["kb.searchLocal"],
+    });
+  });
+
+  it("summarizes LLM provider and permission state and enables send only when ready with a secret", () => {
+    expect(
+      getChatStatusSummary({
+        llmProviderStatus: {
+          hasSecret: true,
+          label: "OpenAI",
+          model: "gpt-4.1-mini",
+          status: "ready",
+        },
+        permissionSummary: {
+          requiresApproval: true,
+          status: "pending",
+        },
+      }),
+    ).toEqual({
+      modelLabel: "gpt-4.1-mini",
+      permissionLabel: "permission pending",
+      providerLabel: "OpenAI",
+      providerStatus: "ready",
+      sendEnabled: true,
+    });
+    expect(
+      getChatStatusSummary({
+        llmProviderStatus: {
+          hasSecret: false,
+          label: "OpenAI",
+          model: "gpt-4.1-mini",
+          status: "missing_secret",
+        },
+      }),
+    ).toMatchObject({
+      providerStatus: "missing_secret",
+      sendEnabled: false,
+    });
+  });
+
+  it("enables dry-run for text and real send only when provider can send", () => {
+    expect(getComposerSendState("", true)).toEqual({
+      dryRunEnabled: false,
+      realSendEnabled: false,
+    });
+    expect(getComposerSendState("Summarize workspace", false)).toEqual({
+      dryRunEnabled: true,
+      realSendEnabled: false,
+    });
+    expect(getComposerSendState("Summarize workspace", true)).toEqual({
+      dryRunEnabled: true,
+      realSendEnabled: true,
+    });
+  });
+
+  it("merges dry-run results into chat, context and timeline data", () => {
+    const merged = mergeDryRunResultIntoChatData(
+      { chatMessages: [], contextItems: [], toolCalls: [] },
+      {
+        contextPack: {
+          items: [{ title: "KB Doc", type: "kb" }],
+        },
+        draft: {
+          id: "draft-1",
+          userText: "Summarize workspace",
+        },
+        mockResponse: {
+          id: "mock-1",
+          text: "Dry-run preview only.",
+        },
+        toolPlan: {
+          items: [{ decision: "requiresApproval", permissionLevel: 2, title: "Write note", toolId: "notes.write" }],
+        },
+      },
+    );
+
+    expect(merged.chatMessages).toEqual([
+      expect.objectContaining({ role: "user", text: "Summarize workspace" }),
+      expect.objectContaining({ role: "assistant", text: "Dry-run preview only." }),
+    ]);
+    expect(merged.contextItems).toEqual([expect.objectContaining({ title: "KB Doc", type: "kb" })]);
+    expect(merged.toolCalls).toEqual([
+      expect.objectContaining({
+        permission: "Level 2 / requiresApproval",
+        state: "permission_required",
+        title: "Write note",
+      }),
+    ]);
+  });
+
+  it("merges real text replies without recording tool execution", () => {
+    const merged = mergeTextSendResultIntoChatData(
+      { chatMessages: [], contextItems: [], toolCalls: [] },
+      {
+        assistantMessage: {
+          id: "assistant-1",
+          metadata: { provider: "openai", toolCalls: 0 },
+          role: "assistant",
+          source: "llm",
+          text: "Live answer.",
+        },
+        contextPack: {
+          items: [{ sourceType: "kb", title: "Docs", type: "kb" }],
+        },
+        toolCalls: [
+          {
+            duration: "0ms",
+            permission: "none",
+            state: "done",
+            title: "No tools executed",
+          },
+        ],
+        userMessage: {
+          id: "user-1",
+          role: "user",
+          text: "Hello",
+        },
+      },
+    );
+
+    expect(merged.chatMessages).toEqual([
+      expect.objectContaining({ role: "user", text: "Hello" }),
+      expect.objectContaining({ role: "assistant", source: "llm", text: "Live answer." }),
+    ]);
+    expect(merged.contextItems).toEqual([expect.objectContaining({ title: "Docs", type: "kb" })]);
+    expect(merged.toolCalls).toEqual([
+      expect.objectContaining({
+        permission: "none",
+        state: "done",
+        title: "No tools executed",
+      }),
+    ]);
+    expect(JSON.stringify(merged)).not.toMatch(/apiKey|sk-/);
+  });
+
+  it("keeps chat state stable when real send returns an ApiResult error", () => {
+    const merged = mergeSendErrorIntoChatData(
+      { chatMessages: [{ role: "assistant", text: "Existing" }], contextItems: [], toolCalls: [] },
+      {
+        code: "LLM_SECRET_MISSING",
+        message: "LLM provider secret is not configured.",
+      },
+    );
+
+    expect(merged).toMatchObject({
+      chatMessages: [{ role: "assistant", text: "Existing" }],
+      sendError: {
+        code: "LLM_SECRET_MISSING",
+        message: "LLM provider secret is not configured.",
+      },
+      toolCalls: [
+        expect.objectContaining({
+          permission: "none",
+          title: "No tools executed",
+        }),
+      ],
+    });
+  });
+
+  it("starts a streaming reply with a user message, assistant placeholder and no tool execution", () => {
+    const merged = mergeStreamStartIntoChatData(
+      { chatMessages: [], contextItems: [], toolCalls: [] },
+      {
+        requestId: "stream-1",
+        userMessage: {
+          id: "user-1",
+          role: "user",
+          text: "Hello",
+        },
+      },
+    );
+
+    expect(merged.chatMessages).toEqual([
+      expect.objectContaining({ id: "user-1", role: "user", status: "sent", text: "Hello" }),
+      expect.objectContaining({ id: "assistant-stream-1", role: "assistant", status: "generating", text: "" }),
+    ]);
+    expect(merged.generating).toBe(true);
+    expect(merged.activeRequestId).toBe("stream-1");
+    expect(merged.toolCalls).toEqual([
+      expect.objectContaining({
+        permission: "none",
+        title: "No tools executed",
+      }),
+    ]);
+  });
+
+  it("appends stream tokens and marks the assistant reply ready on done", () => {
+    const started = mergeStreamStartIntoChatData(
+      { chatMessages: [], contextItems: [], toolCalls: [] },
+      {
+        requestId: "stream-1",
+        userMessage: { id: "user-1", role: "user", text: "Hello" },
+      },
+    );
+    const withToken = mergeStreamEventIntoChatData(started, {
+      requestId: "stream-1",
+      text: "Hello ",
+      token: "Hello ",
+      type: "token",
+    });
+    const done = mergeStreamEventIntoChatData(withToken, {
+      metadata: { model: "gpt-4.1-mini", provider: "openai", toolCalls: 0 },
+      requestId: "stream-1",
+      status: "done",
+      text: "Hello world",
+      type: "done",
+    });
+
+    expect(withToken.chatMessages.at(-1)).toMatchObject({
+      id: "assistant-stream-1",
+      status: "generating",
+      text: "Hello ",
+    });
+    expect(done.chatMessages.at(-1)).toMatchObject({
+      metadata: { model: "gpt-4.1-mini", provider: "openai", toolCalls: 0 },
+      status: "ready",
+      text: "Hello world",
+    });
+    expect(done.generating).toBe(false);
+  });
+
+  it("marks streaming replies cancelled or errored without dropping the user message", () => {
+    const started = mergeStreamStartIntoChatData(
+      { chatMessages: [], contextItems: [], toolCalls: [] },
+      {
+        requestId: "stream-1",
+        userMessage: { id: "user-1", role: "user", text: "Hello" },
+      },
+    );
+    const cancelled = mergeStreamEventIntoChatData(started, {
+      requestId: "stream-1",
+      status: "cancelled",
+      text: "Partial",
+      type: "cancelled",
+    });
+    const errored = mergeStreamEventIntoChatData(started, {
+      error: {
+        code: "LLM_REQUEST_FAILED",
+        message: "LLM request failed.",
+      },
+      requestId: "stream-1",
+      type: "error",
+    });
+
+    expect(cancelled.chatMessages).toEqual([
+      expect.objectContaining({ role: "user", text: "Hello" }),
+      expect.objectContaining({ role: "assistant", status: "cancelled", text: "Partial" }),
+    ]);
+    expect(cancelled.generating).toBe(false);
+    expect(errored.chatMessages).toEqual([
+      expect.objectContaining({ role: "user", text: "Hello" }),
+      expect.objectContaining({ role: "assistant", status: "error" }),
+    ]);
+    expect(errored.sendError).toEqual({
+      code: "LLM_REQUEST_FAILED",
+      message: "LLM request failed.",
+    });
+    expect(errored.toolCalls).toEqual([
+      expect.objectContaining({
+        permission: "none",
+        title: "No tools executed",
+      }),
+    ]);
+  });
+
+  it("merges the final streaming result into the existing assistant placeholder without duplicating messages", () => {
+    const started = mergeStreamStartIntoChatData(
+      { chatMessages: [], contextItems: [], toolCalls: [] },
+      {
+        requestId: "stream-1",
+        userMessage: { id: "user-stream-1", role: "user", text: "Hello" },
+      },
+    );
+    const merged = mergeStreamResultIntoChatData(started, {
+      assistantMessage: {
+        metadata: { model: "gpt-4.1-mini", provider: "openai", toolCalls: 0 },
+        role: "assistant",
+        source: "llm",
+        status: "ready",
+        text: "Final answer",
+      },
+      contextPack: {
+        items: [{ title: "Docs", type: "kb" }],
+      },
+      requestId: "stream-1",
+      status: "ready",
+      toolCalls: [
+        {
+          duration: "0ms",
+          permission: "none",
+          state: "done",
+          title: "No tools executed",
+        },
+      ],
+      userMessage: { id: "user-stream-1", role: "user", text: "Hello" },
+    });
+
+    expect(merged.chatMessages).toEqual([
+      expect.objectContaining({ id: "user-stream-1", role: "user", text: "Hello" }),
+      expect.objectContaining({
+        id: "assistant-stream-1",
+        metadata: { model: "gpt-4.1-mini", provider: "openai", toolCalls: 0 },
+        role: "assistant",
+        status: "ready",
+        text: "Final answer",
+      }),
+    ]);
+    expect(merged.contextItems).toEqual([expect.objectContaining({ title: "Docs", type: "kb" })]);
+    expect(merged.generating).toBe(false);
+    expect(merged.toolCalls).toEqual([
+      expect.objectContaining({
+        permission: "none",
+        title: "No tools executed",
+      }),
+    ]);
+  });
+
+  it("merges tool-augmented stream results into context and timeline without leaking secrets", () => {
+    const started = mergeStreamStartIntoChatData(
+      { chatMessages: [], contextItems: [], toolCalls: [] },
+      {
+        requestId: "stream-tools-1",
+        userMessage: { id: "user-stream-tools-1", role: "user", text: "Search docs" },
+      },
+    );
+    const merged = mergeStreamResultIntoChatData(started, {
+      assistantMessage: {
+        metadata: { model: "gpt-4.1-mini", provider: "openai", toolCalls: 1 },
+        role: "assistant",
+        source: "llm",
+        status: "ready",
+        text: "Final answer",
+      },
+      contextPack: {
+        items: [
+          {
+            excerpt: "Knowledge Search: apiKey=[redacted]",
+            sourceType: "tool",
+            title: "Tool: Knowledge Search",
+            type: "tool",
+          },
+        ],
+      },
+      requestId: "stream-tools-1",
+      status: "ready",
+      toolCalls: [
+        {
+          permission: "Level 1 / read-only",
+          permissionLevel: 1,
+          state: "completed",
+          title: "Knowledge Search",
+          toolId: "kb.searchLocal",
+        },
+      ],
+      toolResultsSummary: [
+        {
+          status: "completed",
+          summary: "Knowledge Search: apiKey=[redacted]",
+          toolId: "kb.searchLocal",
+        },
+      ],
+      userMessage: { id: "user-stream-tools-1", role: "user", text: "Search docs" },
+    });
+
+    expect(merged.contextItems).toEqual([expect.objectContaining({
+      title: "Tool: Knowledge Search",
+      type: "tool",
+    })]);
+    expect(merged.toolCalls).toEqual([
+      expect.objectContaining({
+        permission: "Level 1 / read-only",
+        state: "completed",
+        toolId: "kb.searchLocal",
+      }),
+    ]);
+    expect(JSON.stringify(merged)).not.toMatch(/sk-|apiKey=sk-|token=|secret=|Authorization/i);
+  });
+});

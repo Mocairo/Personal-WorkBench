@@ -1,0 +1,151 @@
+@startuml
+title App SQLite 核心实体关系
+
+skinparam linetype ortho
+skinparam shadowing false
+
+entity "ServiceStatus" as ServiceStatus {
+  * serviceId
+  --
+  name
+  type
+  status
+  endpoint
+  pid
+  lastCheckedAt
+  lastError
+}
+
+entity "TaskRun" as TaskRun {
+  * taskId
+  --
+  type
+  source
+  status
+  stage
+  percent
+  startedAt
+  finishedAt
+  errorCode
+}
+
+entity "KnowledgeSource" as KnowledgeSource {
+  * sourceId
+  --
+  type
+  path
+  title
+  status
+  lastIndexedAt
+}
+
+entity "KnowledgeDocument" as KnowledgeDocument {
+  * documentId
+  --
+  sourceId
+  path
+  title
+  mimeType
+  hash
+  indexedAt
+}
+
+entity "KnowledgeChunk" as KnowledgeChunk {
+  * chunkId
+  --
+  documentId
+  ordinal
+  textHash
+  tokenCount
+  vectorRef
+}
+
+entity "CodeRepository" as CodeRepository {
+  * repoId
+  --
+  path
+  name
+  defaultBranch
+  lastScannedAt
+  gitStatus
+}
+
+entity "CodeSymbol" as CodeSymbol {
+  * symbolId
+  --
+  repoId
+  filePath
+  name
+  kind
+  language
+  startLine
+  endLine
+}
+
+entity "AgentConfig" as AgentConfig {
+  * agentId
+  --
+  name
+  modelProfileId
+  toolPolicyId
+  memoryPolicy
+}
+
+entity "AgentSession" as AgentSession {
+  * sessionId
+  --
+  agentId
+  title
+  createdAt
+  updatedAt
+}
+
+entity "AgentRun" as AgentRun {
+  * runId
+  --
+  sessionId
+  status
+  model
+  startedAt
+  finishedAt
+}
+
+entity "ToolCall" as ToolCall {
+  * toolCallId
+  --
+  runId
+  toolId
+  status
+  inputSummary
+  outputSummary
+}
+
+entity "MusicTrack" as MusicTrack {
+  * trackId
+  --
+  path
+  title
+  artist
+  album
+  duration
+  favorite
+}
+
+entity "IntelReportRef" as IntelReportRef {
+  * reportId
+  --
+  date
+  path
+  kind
+  summary
+}
+
+KnowledgeSource ||--o{ KnowledgeDocument
+KnowledgeDocument ||--o{ KnowledgeChunk
+CodeRepository ||--o{ CodeSymbol
+AgentConfig ||--o{ AgentSession
+AgentSession ||--o{ AgentRun
+AgentRun ||--o{ ToolCall
+TaskRun }o--|| ServiceStatus : optional source
+
+@enduml

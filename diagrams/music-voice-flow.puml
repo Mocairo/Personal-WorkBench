@@ -1,0 +1,45 @@
+@startuml
+title Local Music 与 Voice Assistant 流程
+
+skinparam shadowing false
+
+actor 用户 as User
+participant "Local Music Page" as MusicPage
+participant "Voice Assistant" as VoiceUI
+participant "window.api.music" as MusicApi
+participant "window.api.voice" as VoiceApi
+participant "Music Service" as MusicService
+participant "Voice Service" as VoiceService
+participant "Agent Runtime / Command Router" as Agent
+participant "Permission Gate" as Gate
+database "App SQLite" as DB
+folder "Music Library" as Files
+
+User -> MusicPage: 添加音乐目录
+MusicPage -> MusicApi: addLibrary(path)
+MusicApi -> MusicService: 记录目录
+MusicService -> Files: 扫描音频文件
+MusicService -> DB: 写入曲目元数据
+
+User -> MusicPage: 播放曲目
+MusicPage -> MusicApi: play(trackId)
+MusicApi -> MusicService: 播放
+MusicService -> DB: 更新最近播放
+
+User -> VoiceUI: 语音命令
+VoiceUI -> VoiceApi: startDictation()
+VoiceApi -> VoiceService: ASR
+VoiceService -> Agent: 文本命令
+Agent -> Gate: 校验命令权限
+
+alt 控制音乐
+  Gate --> Agent: 允许
+  Agent -> MusicService: 播放 / 暂停 / 搜索
+  MusicService --> Agent: 状态
+  Agent -> VoiceService: TTS 可选播报
+else 高风险命令
+  Gate --> Agent: 拒绝或要求确认
+  Agent -> VoiceUI: 展示确认或拒绝
+end
+
+@enduml

@@ -1,0 +1,45 @@
+{
+  "chatMessages": [
+    {
+      "role": "user",
+      "text": "Summarize my local console workspace."
+    },
+    {
+      "role": "assistant",
+      "text": "The prototype is a local Electron console with page switching, knowledge, repository, intel, music, widgets, agent management, and chat surfaces."
+    },
+    {
+      "role": "user",
+      "text": "What should I connect next?"
+    },
+    {
+      "role": "assistant",
+      "text": "Keep the UI stable and connect one read-only local data source at a time, then add controlled actions after the data contracts feel right."
+    }
+  ],
+  "contextItems": [
+    "docs/ui-data-contract.md",
+    "docs/agent-chat-local-session.md",
+    "docs/agent-management-local-config.md",
+    {
+      "label": "src/electron/mainProvider.js"
+    }
+  ],
+  "toolCalls": [
+    {
+      "title": "Read data contract",
+      "meta": "docs/ui-data-contract.md",
+      "state": "done"
+    },
+    {
+      "title": "Load agent config",
+      "meta": "agents/agents.json",
+      "state": "done"
+    },
+    {
+      "title": "Inspect local session",
+      "meta": "agent-chat/session.json",
+      "state": "done"
+    }
+  ]
+}

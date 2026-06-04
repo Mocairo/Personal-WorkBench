@@ -1,0 +1,71 @@
+@startuml
+title 页面入口与能力模块映射
+
+skinparam componentStyle rectangle
+skinparam shadowing false
+
+package "页面入口" {
+  [Home Dashboard] as Home
+  [Agent Chat] as Chat
+  [Knowledge Base] as KBPage
+  [Agent Management] as AgentMgmt
+  [Code Repository] as CodePage
+  [Local Music] as MusicPage
+  [情报中心] as IntelPage
+  [其他小组件] as Widgets
+}
+
+package "能力模块" {
+  [Knowledge Service] as KB
+  [Code Repository Service] as Code
+  [Agent Runtime] as Agent
+  [LLM Provider Adapter] as LLM
+  [local-intel Adapter] as Intel
+  [Music Service] as Music
+  [Voice Service] as Voice
+  [Service Manager] as ServiceManager
+  [App State Store] as State
+  [Widget Runtime] as WidgetRuntime
+}
+
+Home --> State
+Home --> ServiceManager
+Home --> Intel
+Home --> Agent
+Home --> KB
+Home --> Code
+Home --> Music
+
+Chat --> Agent
+Chat --> LLM
+Chat --> KB
+Chat --> Code
+Chat --> Intel
+Chat --> Voice
+
+KBPage --> KB
+KBPage --> LLM
+
+AgentMgmt --> Agent
+AgentMgmt --> LLM
+AgentMgmt --> State
+
+CodePage --> Code
+CodePage --> LLM
+
+MusicPage --> Music
+MusicPage --> Voice
+
+IntelPage --> Intel
+IntelPage --> ServiceManager
+
+Widgets --> WidgetRuntime
+Widgets --> State
+Widgets --> ServiceManager
+
+Agent --> LLM
+Agent --> KB
+Agent --> Code
+Agent --> Intel
+
+@enduml

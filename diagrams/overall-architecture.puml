@@ -1,0 +1,118 @@
+@startuml
+title Electron 本地桌面控制台 - 总体架构
+
+skinparam componentStyle rectangle
+skinparam shadowing false
+skinparam packageStyle rectangle
+
+package "Electron 桌面客户端" {
+  package "Renderer 页面层" {
+    [Home Dashboard]
+    [Agent Chat]
+    [Knowledge Base]
+    [Agent Management]
+    [Code Repository]
+    [Local Music]
+    [情报中心]
+    [其他小组件]
+  }
+
+  package "Renderer 复合组件层" {
+    [知识库工作区]
+    [代码仓库工作区]
+    [Agent 工作区]
+    [情报卡片与观察雷达]
+    [音乐播放控件]
+    [服务状态面板]
+  }
+
+  package "Preload API" {
+    [window.api.kb]
+    [window.api.codeRepo]
+    [window.api.agent]
+    [window.api.intel]
+    [window.api.music]
+    [window.api.voice]
+    [window.api.system]
+  }
+
+  package "Electron 主进程" {
+    [IPC Router]
+    [Service Manager]
+    [File Adapter]
+    [Git Adapter]
+    [Process Adapter]
+    [LLM Provider Adapter]
+    [App SQLite Adapter]
+    [Secrets Store]
+  }
+}
+
+package "本地服务与数据" {
+  [local-intel Python Service]
+  database "App SQLite" as AppDB
+  database "local-intel SQLite" as IntelDB
+  database "Vector Store" as VectorDB
+  folder "Markdown / Obsidian / PDF" as Docs
+  folder "Code Repositories" as Repos
+  folder "Music Library" as MusicFiles
+  folder "Reports" as Reports
+}
+
+cloud "外部与本地模型服务" {
+  [OpenAI-compatible API]
+  [MiMo API]
+  [Local Model Service]
+  [Embedding Service]
+  [ASR / TTS Service]
+  [GitHub / arXiv / HN / GDELT / RSS]
+}
+
+[Home Dashboard] --> [服务状态面板]
+[Agent Chat] --> [Agent 工作区]
+[Knowledge Base] --> [知识库工作区]
+[Code Repository] --> [代码仓库工作区]
+[Local Music] --> [音乐播放控件]
+[情报中心] --> [情报卡片与观察雷达]
+
+[知识库工作区] --> [window.api.kb]
+[代码仓库工作区] --> [window.api.codeRepo]
+[Agent 工作区] --> [window.api.agent]
+[情报卡片与观察雷达] --> [window.api.intel]
+[音乐播放控件] --> [window.api.music]
+[服务状态面板] --> [window.api.system]
+
+[window.api.kb] --> [IPC Router]
+[window.api.codeRepo] --> [IPC Router]
+[window.api.agent] --> [IPC Router]
+[window.api.intel] --> [IPC Router]
+[window.api.music] --> [IPC Router]
+[window.api.voice] --> [IPC Router]
+[window.api.system] --> [IPC Router]
+
+[IPC Router] --> [Service Manager]
+[IPC Router] --> [File Adapter]
+[IPC Router] --> [Git Adapter]
+[IPC Router] --> [Process Adapter]
+[IPC Router] --> [LLM Provider Adapter]
+[IPC Router] --> [App SQLite Adapter]
+[IPC Router] --> [Secrets Store]
+
+[Service Manager] --> [local-intel Python Service]
+[local-intel Python Service] --> IntelDB
+[local-intel Python Service] --> Reports
+[local-intel Python Service] --> [GitHub / arXiv / HN / GDELT / RSS]
+
+[App SQLite Adapter] --> AppDB
+[File Adapter] --> Docs
+[File Adapter] --> Repos
+[File Adapter] --> MusicFiles
+[Git Adapter] --> Repos
+[LLM Provider Adapter] --> [OpenAI-compatible API]
+[LLM Provider Adapter] --> [MiMo API]
+[LLM Provider Adapter] --> [Local Model Service]
+[LLM Provider Adapter] --> [Embedding Service]
+[LLM Provider Adapter] --> [ASR / TTS Service]
+[window.api.kb] --> VectorDB
+
+@enduml

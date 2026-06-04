@@ -1,0 +1,105 @@
+@startuml
+title Preload API 命名空间契约
+
+skinparam classAttributeIconSize 0
+skinparam shadowing false
+
+class "window.api.system" as SystemApi {
+  getAppStatus()
+  selectDirectory(options)
+  listTasks(filter)
+  cancelTask(taskId)
+  onTaskEvent(callback)
+}
+
+class "window.api.kb" as KbApi {
+  listSources()
+  addSource(source)
+  startIndex(scope)
+  getIndexStatus()
+  search(query, options)
+  ask(question, options)
+}
+
+class "window.api.codeRepo" as CodeApi {
+  listRepositories()
+  addRepository(path)
+  getRepositoryStatus(repoId)
+  getGitSummary(repoId)
+  scanRepository(repoId, options)
+  askCode(repoId, question, options)
+  generateDiagram(repoId, options)
+}
+
+class "window.api.agent" as AgentApi {
+  listSessions()
+  createSession(options)
+  sendMessage(sessionId, message, options)
+  stopRun(runId)
+  listAgents()
+  saveAgent(agent)
+  setToolPermission(agentId, toolId, policy)
+}
+
+class "window.api.intel" as IntelApi {
+  getServiceStatus()
+  startService()
+  stopService()
+  getDashboardSummary()
+  getWatchRadar()
+  getSourceHealth()
+  runUpdateNow()
+}
+
+class "window.api.music" as MusicApi {
+  addLibrary(path)
+  scanLibrary(libraryId)
+  searchTracks(query, options)
+  play(trackId)
+  pause()
+  getPlaybackState()
+  savePlaylist(playlist)
+}
+
+class "window.api.voice" as VoiceApi {
+  getVoiceStatus()
+  startDictation(options)
+  stopDictation()
+  speak(text, options)
+  sendVoiceCommand(command, context)
+}
+
+class ApiResult<T> {
+  ok: boolean
+  data?: T
+  error?: ApiError
+}
+
+class ApiError {
+  code: string
+  message: string
+  detail?: string
+  retryable?: boolean
+}
+
+class TaskRef {
+  taskId: string
+  type: string
+  status: string
+}
+
+SystemApi ..> ApiResult
+KbApi ..> ApiResult
+CodeApi ..> ApiResult
+AgentApi ..> ApiResult
+IntelApi ..> ApiResult
+MusicApi ..> ApiResult
+VoiceApi ..> ApiResult
+SystemApi ..> TaskRef
+KbApi ..> TaskRef
+CodeApi ..> TaskRef
+IntelApi ..> TaskRef
+MusicApi ..> TaskRef
+ApiResult --> ApiError
+
+@enduml

@@ -1,0 +1,33 @@
+@startuml
+title 应用启动与状态恢复时序
+
+skinparam shadowing false
+
+actor 用户 as User
+participant "Electron Main" as Main
+participant "Config Loader" as Config
+participant "Secrets Store" as Secrets
+participant "App SQLite" as DB
+participant "Service Manager" as Services
+participant "BrowserWindow" as Window
+participant "Preload API" as Preload
+participant "Renderer App" as Renderer
+
+User -> Main: 启动应用
+Main -> Config: 读取非敏感配置
+Main -> Secrets: 检查 Provider 配置状态
+Main -> DB: 初始化 / 迁移应用数据库
+Main -> Services: 检查 local-intel / 索引服务 / Provider 状态
+Main -> Window: 创建主窗口
+Window -> Preload: 注入 window.api.*
+Preload -> Renderer: 暴露安全 API
+Renderer -> Preload: getAppStatus()
+Preload -> Main: system:status:get
+Main -> Services: 汇总服务状态
+Services -> Main: 状态摘要
+Main -> DB: 读取上次页面和最近项目
+DB -> Main: 应用状态
+Main -> Renderer: 返回启动状态
+Renderer -> User: 展示 Home 或上次页面
+
+@enduml

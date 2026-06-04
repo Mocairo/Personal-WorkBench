@@ -1,0 +1,41 @@
+@startuml
+title Home Dashboard 数据聚合流程
+
+skinparam shadowing false
+
+actor 用户 as User
+participant "Home Dashboard" as Home
+participant "window.api.system" as SystemApi
+participant "window.api.kb" as KbApi
+participant "window.api.codeRepo" as CodeApi
+participant "window.api.agent" as AgentApi
+participant "window.api.intel" as IntelApi
+participant "window.api.music" as MusicApi
+participant "Electron Main" as Main
+database "App SQLite" as DB
+participant "Service Manager" as Services
+database "local-intel SQLite" as IntelDB
+
+User -> Home: 打开首页
+Home -> SystemApi: getAppStatus()
+Home -> KbApi: getIndexStatus()
+Home -> CodeApi: listRepositories()
+Home -> AgentApi: listSessions()
+Home -> IntelApi: getDashboardSummary()
+Home -> MusicApi: getPlaybackState()
+
+SystemApi -> Main: system:status:get
+KbApi -> Main: kb:index:status
+CodeApi -> Main: codeRepo:list
+AgentApi -> Main: agent:session:list
+IntelApi -> Main: intel:summary:get
+MusicApi -> Main: music:playback:state
+
+Main -> Services: 服务状态
+Main -> DB: 应用状态、任务、最近项目、音乐状态
+Main -> IntelDB: 今日情报摘要和观察雷达
+
+Main --> Home: 聚合卡片数据
+Home --> User: 展示今日入口和异常状态
+
+@enduml

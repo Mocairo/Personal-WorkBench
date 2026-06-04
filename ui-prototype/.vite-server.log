@@ -1,0 +1,240 @@
+
+> desktop-console-ui-prototype@0.1.0 dev
+> vite --host 127.0.0.1 --port 5173
+
+
+  VITE v7.3.3  ready in 233 ms
+
+  ➜  Local:   http://127.0.0.1:5173/
+  ➜  press h + enter to show help
+17:45:24 [vite] (client) page reload src/App.jsx
+17:45:24 [vite] (client) page reload src/components/shell/AppShell.jsx
+17:45:24 [vite] (client) page reload src/components/ui/GlassPanel.jsx
+17:45:24 [vite] (client) page reload src/pages/HomeDashboard.jsx
+17:45:24 [vite] (client) page reload src/components/shell/WindowTitleBar.jsx
+17:45:24 [vite] (client) page reload src/components/shell/FloatingControlBar.jsx
+17:45:24 [vite] (client) page reload src/components/shell/PageSwitcher.jsx
+17:45:24 [vite] (client) page reload src/components/shell/RadialWheel.jsx
+17:45:24 [vite] (client) page reload src/components/shell/PageMiniature.jsx
+17:45:24 [vite] (client) page reload src/components/ui/PanelHeader.jsx
+17:45:24 [vite] (client) page reload src/components/ui/PageFrame.jsx
+17:45:24 [vite] (client) page reload src/components/ui/StatusCard.jsx
+17:45:24 [vite] (client) page reload src/components/ui/QuickEntry.jsx
+17:45:24 [vite] (client) page reload src/pages/AgentChat.jsx
+17:45:24 [vite] (client) page reload src/pages/KnowledgeBase.jsx
+17:45:24 [vite] (client) page reload src/pages/AgentManagement.jsx
+17:45:24 [vite] (client) page reload src/pages/CodeRepository.jsx
+17:45:24 [vite] (client) page reload src/pages/LocalMusic.jsx
+17:45:24 [vite] (client) page reload src/pages/IntelCenter.jsx
+17:45:24 [vite] (client) page reload src/pages/Widgets.jsx
+18:17:45 [vite] (client) page reload src/pages/HomeDashboard.jsx
+18:30:11 [vite] (client) page reload src/services/mockProvider.js
+18:30:11 [vite] (client) page reload src/services/localProvider.js
+18:30:41 [vite] (client) page reload src/pages/AgentChat.jsx
+18:30:41 [vite] (client) page reload src/pages/KnowledgeBase.jsx
+18:30:41 [vite] (client) page reload src/pages/AgentManagement.jsx
+18:30:41 [vite] (client) page reload src/pages/CodeRepository.jsx
+18:30:41 [vite] (client) page reload src/pages/LocalMusic.jsx
+18:30:41 [vite] (client) page reload src/pages/IntelCenter.jsx
+18:30:41 [vite] (client) page reload src/pages/Widgets.jsx
+18:47:12 [vite] (client) page reload src/services/dataProvider.js
+18:49:22 [vite] (client) page reload src/services/mockProvider.js
+19:10:02 [vite] (client) page reload src/services/mockProvider.js
+19:13:16 [vite] (client) page reload src/pages/CodeRepository.jsx
+19:13:50 [vite] (client) page reload src/pages/CodeRepository.jsx
+19:14:12 [vite] (client) page reload src/pages/CodeRepository.jsx
+19:21:16 [vite] (client) page reload src/services/mockProvider.js
+19:27:28 [vite] (client) page reload src/pages/KnowledgeBase.jsx
+21:26:17 [vite] (client) page reload src/services/localProvider.js
+21:26:31 [vite] (client) page reload src/hooks/usePageData.js
+21:33:20 [vite] (client) page reload src/pages/pageComponents.js
+21:34:10 [vite] (client) page reload src/components/pageIcons.jsx
+21:35:56 [vite] (client) page reload src/data/pageRegistry.js
+21:37:36 [vite] (client) hmr update /src/styles.css
+21:38:02 [vite] (client) hmr update /src/styles.css
+22:34:10 [vite] (client) page reload src/services/mockProvider.js
+23:15:50 [vite] (client) page reload src/components/ui/PageFrame.jsx
+23:16:14 [vite] (client) hmr update /src/styles.css
+23:16:32 [vite] (client) hmr update /src/styles.css
+23:42:23 [vite] (client) page reload src/services/localProvider.js
+23:42:39 [vite] (client) page reload src/services/mockProvider.js
+23:42:56 [vite] (client) page reload src/hooks/usePageData.js
+23:46:52 [vite] (client) page reload src/pages/Settings.jsx
+23:46:52 [vite] (client) Pre-transform error: Transform failed with 3 errors:
+D:/python_code/Electron/ui-prototype/src/pages/Settings.jsx:66:10: ERROR: Unexpected closing fragment tag does not match opening "button" tag
+D:/python_code/Electron/ui-prototype/src/pages/Settings.jsx:134:6: ERROR: Unexpected closing "PageFrame" tag does not match opening fragment tag
+D:/python_code/Electron/ui-prototype/src/pages/Settings.jsx:135:2: ERROR: Expected "}" but found ")"
+  Plugin: vite:esbuild
+  File: D:/python_code/Electron/ui-prototype/src/pages/Settings.jsx:66:10
+  
+  Unexpected closing fragment tag does not match opening "button" tag
+  64 |              {statusText}
+  65 |            </button>
+  66 |          </>
+     |            ^
+  67 |        }
+  68 |      >
+  
+  Unexpected closing "PageFrame" tag does not match opening fragment tag
+  132 |          </GlassPanel>
+  133 |        </div>
+  134 |      </PageFrame>
+      |        ^
+  135 |    );
+  136 |  }
+  
+  Expected "}" but found ")"
+  133 |        </div>
+  134 |      </PageFrame>
+  135 |    );
+      |    ^
+  136 |  }
+  137 |  
+  
+23:46:52 [vite] Internal server error: Transform failed with 3 errors:
+D:/python_code/Electron/ui-prototype/src/pages/Settings.jsx:66:10: ERROR: Unexpected closing fragment tag does not match opening "button" tag
+D:/python_code/Electron/ui-prototype/src/pages/Settings.jsx:134:6: ERROR: Unexpected closing "PageFrame" tag does not match opening fragment tag
+D:/python_code/Electron/ui-prototype/src/pages/Settings.jsx:135:2: ERROR: Expected "}" but found ")"
+  Plugin: vite:esbuild
+  File: D:/python_code/Electron/ui-prototype/src/pages/Settings.jsx:66:10
+  
+  Unexpected closing fragment tag does not match opening "button" tag
+  64 |              {statusText}
+  65 |            </button>
+  66 |          </>
+     |            ^
+  67 |        }
+  68 |      >
+  
+  Unexpected closing "PageFrame" tag does not match opening fragment tag
+  132 |          </GlassPanel>
+  133 |        </div>
+  134 |      </PageFrame>
+      |        ^
+  135 |    );
+  136 |  }
+  
+  Expected "}" but found ")"
+  133 |        </div>
+  134 |      </PageFrame>
+  135 |    );
+      |    ^
+  136 |  }
+  137 |  
+  
+      at failureErrorWithLog (D:\python_code\Electron\ui-prototype\node_modules\esbuild\lib\main.js:1748:15)
+      at D:\python_code\Electron\ui-prototype\node_modules\esbuild\lib\main.js:1017:50
+      at responseCallbacks.<computed> (D:\python_code\Electron\ui-prototype\node_modules\esbuild\lib\main.js:884:9)
+      at handleIncomingPacket (D:\python_code\Electron\ui-prototype\node_modules\esbuild\lib\main.js:939:12)
+      at Socket.readFromStdout (D:\python_code\Electron\ui-prototype\node_modules\esbuild\lib\main.js:862:7)
+      at Socket.emit (node:events:508:28)
+      at addChunk (node:internal/streams/readable:559:12)
+      at readableAddChunkPushByteMode (node:internal/streams/readable:510:3)
+      at Readable.push (node:internal/streams/readable:390:5)
+      at Pipe.onStreamRead (node:internal/stream_base_commons:189:23)
+23:48:43 [vite] (client) page reload src/pages/Settings.jsx
+23:49:25 [vite] (client) hmr update /src/styles.css
+23:56:04 [vite] (client) hmr update /src/styles.css
+23:58:45 [vite] (client) page reload src/pages/KnowledgeBase.jsx
+00:01:51 [vite] (client) page reload src/pages/CodeRepository.jsx
+00:02:38 [vite] (client) page reload src/pages/LocalMusic.jsx
+00:05:21 [vite] (client) page reload src/pages/AgentChat.jsx
+00:05:56 [vite] (client) page reload src/pages/AgentChat.jsx
+00:07:05 [vite] (client) page reload src/pages/AgentChat.jsx
+00:09:37 [vite] (client) page reload src/pages/AgentChat.jsx
+00:10:14 [vite] (client) page reload src/pages/AgentChat.jsx
+00:11:37 [vite] (client) page reload src/pages/AgentChat.jsx
+00:12:09 [vite] (client) page reload src/pages/AgentManagement.jsx
+00:31:07 [vite] (client) page reload src/hooks/useHomeDashboardData.js
+00:31:36 [vite] (client) page reload src/pages/HomeDashboard.jsx
+00:32:26 [vite] (client) page reload src/pages/AgentChat.jsx
+00:32:45 [vite] (client) page reload src/pages/AgentManagement.jsx
+00:33:03 [vite] (client) page reload src/pages/KnowledgeBase.jsx
+00:33:22 [vite] (client) page reload src/pages/CodeRepository.jsx
+00:33:42 [vite] (client) page reload src/pages/LocalMusic.jsx
+00:34:03 [vite] (client) page reload src/pages/IntelCenter.jsx
+00:34:19 [vite] (client) page reload src/pages/Widgets.jsx
+00:34:39 [vite] (client) hmr update /src/styles.css
+00:34:59 [vite] (client) hmr update /src/styles.css
+00:35:15 [vite] (client) hmr update /src/styles.css
+00:35:36 [vite] (client) hmr update /src/styles.css
+00:35:54 [vite] (client) hmr update /src/styles.css
+00:36:09 [vite] (client) hmr update /src/styles.css
+00:36:25 [vite] (client) hmr update /src/styles.css
+00:36:41 [vite] (client) hmr update /src/styles.css
+00:43:53 [vite] (client) hmr update /src/styles.css
+12:38:46 [vite] (client) page reload src/data/pageRegistry.js
+12:39:03 [vite] (client) page reload src/pages/pageComponents.js
+12:39:20 [vite] (client) page reload src/components/shell/AppShell.jsx
+12:39:39 [vite] (client) page reload src/components/shell/FloatingControlBar.jsx
+12:40:27 [vite] (client) page reload src/pages/Settings.jsx
+12:41:28 [vite] (client) page reload src/pages/HomeDashboard.jsx
+12:41:28 [vite] (client) page reload src/pages/AgentChat.jsx
+12:41:28 [vite] (client) page reload src/pages/KnowledgeBase.jsx
+12:41:28 [vite] (client) page reload src/pages/AgentManagement.jsx
+12:41:28 [vite] (client) page reload src/pages/CodeRepository.jsx
+12:41:28 [vite] (client) page reload src/pages/IntelCenter.jsx
+12:41:28 [vite] (client) page reload src/pages/LocalMusic.jsx
+12:41:28 [vite] (client) page reload src/pages/Widgets.jsx
+12:41:28 [vite] (client) page reload src/components/ui/RefreshButton.jsx
+12:41:56 [vite] (client) hmr update /src/styles.css
+12:46:14 [vite] (client) page reload src/pages/AgentChat.jsx
+12:47:21 [vite] (client) page reload src/pages/HomeDashboard.jsx
+12:48:33 [vite] (client) page reload src/pages/KnowledgeBase.jsx
+12:49:50 [vite] (client) page reload src/pages/AgentManagement.jsx
+12:51:08 [vite] (client) page reload src/pages/CodeRepository.jsx
+12:52:35 [vite] (client) page reload src/pages/LocalMusic.jsx
+12:53:47 [vite] (client) page reload src/pages/IntelCenter.jsx
+12:54:52 [vite] (client) page reload src/pages/Widgets.jsx
+12:57:26 [vite] (client) hmr update /src/styles.css
+13:03:36 [vite] (client) page reload src/pages/Settings.jsx
+13:07:00 [vite] (client) hmr update /src/styles.css
+13:58:06 [vite] (client) page reload src/data/pageRegistry.js
+13:58:06 [vite] (client) Pre-transform error: Failed to load url /src/data/pageRegistry.js (resolved id: D:/python_code/Electron/ui-prototype/src/data/pageRegistry.js) in D:/python_code/Electron/ui-prototype/src/hooks/usePageNavigation.js. Does the file exist?
+13:58:06 [vite] (client) Pre-transform error: Failed to load url /src/data/pageRegistry.js (resolved id: D:/python_code/Electron/ui-prototype/src/data/pageRegistry.js) in D:/python_code/Electron/ui-prototype/src/hooks/usePageNavigation.js. Does the file exist?
+13:58:06 [vite] (client) Pre-transform error: Failed to load url /src/data/pageRegistry.js (resolved id: D:/python_code/Electron/ui-prototype/src/data/pageRegistry.js) in D:/python_code/Electron/ui-prototype/src/hooks/usePageNavigation.js. Does the file exist?
+13:58:06 [vite] (client) Pre-transform error: Failed to load url /src/data/pageRegistry.js (resolved id: D:/python_code/Electron/ui-prototype/src/data/pageRegistry.js) in D:/python_code/Electron/ui-prototype/src/hooks/usePageNavigation.js. Does the file exist?
+13:58:06 [vite] (client) Pre-transform error: Failed to load url /src/data/pageRegistry.js (resolved id: D:/python_code/Electron/ui-prototype/src/data/pageRegistry.js) in D:/python_code/Electron/ui-prototype/src/hooks/usePageNavigation.js. Does the file exist?
+13:58:34 [vite] (client) page reload src/data/pageRegistry.js
+13:58:59 [vite] (client) page reload src/components/shell/FloatingControlBar.jsx
+13:59:41 [vite] (client) page reload src/pages/KnowledgeBase.jsx
+14:00:29 [vite] (client) page reload src/pages/CodeRepository.jsx
+14:01:01 [vite] (client) page reload src/pages/AgentManagement.jsx
+14:02:10 [vite] (client) page reload src/pages/IntelCenter.jsx
+14:02:11 [vite] (client) Pre-transform error: Failed to load url /src/pages/IntelCenter.jsx (resolved id: D:/python_code/Electron/ui-prototype/src/pages/IntelCenter.jsx) in D:/python_code/Electron/ui-prototype/src/pages/pageComponents.js. Does the file exist?
+14:02:59 [vite] (client) page reload src/pages/IntelCenter.jsx
+14:03:15 [vite] (client) page reload src/pages/LocalMusic.jsx
+14:03:39 [vite] (client) page reload src/pages/Widgets.jsx
+14:03:40 [vite] (client) Pre-transform error: Failed to load url /src/pages/Widgets.jsx (resolved id: D:/python_code/Electron/ui-prototype/src/pages/Widgets.jsx) in D:/python_code/Electron/ui-prototype/src/pages/pageComponents.js. Does the file exist?
+14:04:12 [vite] (client) page reload src/pages/Widgets.jsx
+14:06:45 [vite] (client) page reload src/pages/AgentChat.jsx
+14:07:15 [vite] (client) hmr update /src/styles.css
+14:07:39 [vite] (client) hmr update /src/styles.css
+14:08:07 [vite] (client) hmr update /src/styles.css
+14:08:37 [vite] (client) hmr update /src/styles.css
+14:09:06 [vite] (client) hmr update /src/styles.css
+14:15:02 [vite] (client) hmr update /src/styles.css
+14:16:01 [vite] (client) hmr update /src/styles.css
+14:18:18 [vite] (client) page reload src/components/shell/AppShell.jsx
+14:18:37 [vite] (client) hmr update /src/styles.css
+17:05:15 [vite] (client) page reload src/services/localProvider.js
+17:05:15 [vite] (client) page reload src/hooks/usePageData.js
+17:05:15 [vite] (client) page reload src/services/dataProvider.js
+19:46:35 [vite] (client) page reload src/services/mockProvider.js
+19:47:13 [vite] (client) page reload src/pages/Settings.jsx
+19:47:57 [vite] (client) page reload src/pages/KnowledgeBase.jsx
+19:47:57 [vite] (client) page reload src/pages/CodeRepository.jsx
+19:47:57 [vite] (client) page reload src/pages/LocalMusic.jsx
+19:47:57 [vite] (client) page reload src/pages/IntelCenter.jsx
+19:48:16 [vite] (client) page reload src/pages/LocalMusic.jsx
+20:11:19 [vite] (client) page reload index.html
+20:45:16 [vite] (client) page reload src/services/mockProvider.js
+20:45:38 [vite] (client) page reload src/services/localProvider.js
+20:46:18 [vite] (client) page reload src/pages/KnowledgeBase.jsx
+20:46:41 [vite] (client) hmr update /src/styles.css
+21:58:07 [vite] (client) page reload src/components/shell/AppShell.jsx
+21:58:07 [vite] (client) page reload src/hooks/usePageNavigation.js
+21:58:07 [vite] (client) page reload src/components/shell/FloatingControlBar.jsx
+22:34:01 [vite] (client) page reload src/services/localProvider.js
+22:34:01 [vite] (client) page reload src/services/mockProvider.js
+22:34:42 [vite] (client) page reload src/pages/CodeRepository.jsx

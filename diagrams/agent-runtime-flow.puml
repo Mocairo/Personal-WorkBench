@@ -1,0 +1,39 @@
+@startuml
+title Agent Runtime 工作流
+
+skinparam shadowing false
+
+actor 用户 as User
+participant "Agent Chat" as Chat
+participant "Agent Runtime" as Runtime
+participant "Context Builder" as Context
+participant "Tool Registry" as Tools
+participant "Permission Gate" as Gate
+participant "LLM Provider Adapter" as LLM
+participant "本地能力模块" as LocalTools
+database "App SQLite" as DB
+
+User -> Chat: 输入消息 / 选择上下文
+Chat -> Runtime: createRun(message, options)
+Runtime -> Context: 构建上下文
+Context -> DB: 读取会话、任务、偏好
+Context -> Runtime: 返回上下文包
+Runtime -> Tools: 查询可用工具
+Tools -> Runtime: 返回工具定义
+Runtime -> LLM: 请求模型响应
+LLM -> Runtime: 返回回答或工具调用请求
+
+alt 需要工具调用
+  Runtime -> Gate: 校验工具权限和参数
+  Gate -> Runtime: 允许执行
+  Runtime -> LocalTools: 执行工具
+  LocalTools -> Runtime: 返回结果
+  Runtime -> LLM: 提交工具结果继续推理
+  LLM -> Runtime: 返回最终结果
+end
+
+Runtime -> DB: 保存消息、工具调用、日志、结果
+Runtime -> Chat: 流式输出或最终结果
+Chat -> User: 展示回答、引用、工具记录
+
+@enduml

@@ -1,0 +1,33 @@
+@startuml
+title Knowledge Base RAG 数据流
+
+skinparam shadowing false
+
+start
+:用户导入 Markdown / PDF / 网页剪藏 / Obsidian Vault;
+:File Importer 记录来源路径与元数据;
+:Text Parser 抽取正文;
+:Chunker 生成文本块;
+fork
+  :Keyword Index 建立关键词和全文检索;
+fork again
+  :Embedding Service 生成向量;
+  :写入 Vector Store;
+end fork
+:索引状态写入 App SQLite;
+
+:用户在 Knowledge Base 或 Agent Chat 提问;
+:Query Normalizer 处理查询;
+fork
+  :Keyword Search;
+fork again
+  :Vector Search;
+end fork
+:Hybrid Search 合并结果;
+:Context Builder 组装上下文;
+:LLM Provider Adapter 请求回答;
+:生成带来源引用的答案;
+:保存问答记录和引用来源;
+stop
+
+@enduml

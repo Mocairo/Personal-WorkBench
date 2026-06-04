@@ -1,0 +1,37 @@
+@startuml
+title 快捷键页面切换器状态机
+
+skinparam shadowing false
+
+[*] --> ActivePage : 应用启动 / 恢复上次页面
+
+ActivePage --> SwitcherOpen : Alt+Space
+ActivePage --> CommandPaletteOpen : Ctrl+K
+ActivePage --> Switching : Alt+1..8
+ActivePage --> Switching : Ctrl+Tab / Ctrl+Shift+Tab
+
+SwitcherOpen --> SwitcherOpen : 方向键 / 滚轮移动选择
+SwitcherOpen --> Switching : Enter / 点击中心卡片
+SwitcherOpen --> ActivePage : Esc
+
+CommandPaletteOpen --> Switching : 选择页面结果
+CommandPaletteOpen --> ActivePage : Esc
+
+Switching --> SaveCurrentPageState : 保存滚动、筛选、选中对象、临时输入
+SaveCurrentPageState --> LoadTargetPage : 读取目标页面状态
+LoadTargetPage --> ActivePage : 当前窗口只显示目标页面内容
+
+ActivePage --> SuspendedPage : 页面长时间未访问
+SuspendedPage --> LoadTargetPage : 重新切回该页面
+
+note right of ActivePage
+默认状态下不显示固定侧边栏。
+当前窗口只呈现当前页面。
+end note
+
+note right of SwitcherOpen
+切换器临时覆盖在当前页面上。
+背景可弱化，但当前页面状态不销毁。
+end note
+
+@enduml

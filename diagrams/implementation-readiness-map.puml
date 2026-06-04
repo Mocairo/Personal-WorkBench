@@ -1,0 +1,114 @@
+@startuml
+title 从需求蓝图进入桌面客户端实现的依赖路线图
+
+skinparam componentStyle rectangle
+skinparam shadowing false
+
+package "Foundation" {
+  [Desktop Shell]
+  [Current Page Host]
+  [Page Registry]
+  [Shortcut Router]
+  [Page Switcher Overlay]
+  [Command Palette]
+  [Settings]
+  [Task Center]
+}
+
+package "Platform Contracts" {
+  [Preload API]
+  [IPC Router]
+  [ApiResult]
+  [Task Event Stream]
+  [Permission Gate]
+}
+
+package "Local Platform" {
+  [App SQLite]
+  [Config Store]
+  [Secrets Store]
+  [Service Manager]
+  [LLM Provider Adapter]
+}
+
+package "Core Services" {
+  [local-intel Adapter]
+  [Knowledge Service]
+  [Code Repository Service]
+  [Agent Runtime]
+}
+
+package "Core Pages" {
+  [Home Dashboard]
+  [Knowledge Base Page]
+  [Code Repository Page]
+  [Agent Chat Page]
+  [Agent Management Page]
+  [情报中心 Page]
+}
+
+package "Extensions" {
+  [Local Music]
+  [Voice Assistant]
+  [Widgets]
+}
+
+[Desktop Shell] --> [Current Page Host]
+[Desktop Shell] --> [Page Registry]
+[Desktop Shell] --> [Shortcut Router]
+[Desktop Shell] --> [Page Switcher Overlay]
+[Desktop Shell] --> [Command Palette]
+[Desktop Shell] --> [Settings]
+[Desktop Shell] --> [Task Center]
+
+[Shortcut Router] --> [Page Registry]
+[Page Switcher Overlay] --> [Page Registry]
+[Page Registry] --> [Current Page Host]
+
+[Desktop Shell] --> [Preload API]
+[Preload API] --> [IPC Router]
+[IPC Router] --> [ApiResult]
+[IPC Router] --> [Task Event Stream]
+[IPC Router] --> [Permission Gate]
+
+[IPC Router] --> [App SQLite]
+[IPC Router] --> [Config Store]
+[IPC Router] --> [Secrets Store]
+[IPC Router] --> [Service Manager]
+[IPC Router] --> [LLM Provider Adapter]
+
+[Service Manager] --> [local-intel Adapter]
+[LLM Provider Adapter] --> [Knowledge Service]
+[LLM Provider Adapter] --> [Code Repository Service]
+[LLM Provider Adapter] --> [Agent Runtime]
+
+[Knowledge Service] --> [Knowledge Base Page]
+[Code Repository Service] --> [Code Repository Page]
+[Agent Runtime] --> [Agent Chat Page]
+[Agent Runtime] --> [Agent Management Page]
+[local-intel Adapter] --> [情报中心 Page]
+
+[Knowledge Base Page] --> [Current Page Host]
+[Code Repository Page] --> [Current Page Host]
+[Agent Chat Page] --> [Current Page Host]
+[Agent Management Page] --> [Current Page Host]
+[情报中心 Page] --> [Current Page Host]
+[Home Dashboard] --> [Current Page Host]
+
+[Knowledge Service] --> [Home Dashboard]
+[Code Repository Service] --> [Home Dashboard]
+[Agent Runtime] --> [Home Dashboard]
+[local-intel Adapter] --> [Home Dashboard]
+
+[Local Music] --> [Current Page Host]
+[Voice Assistant] --> [Agent Runtime]
+[Widgets] --> [Desktop Shell]
+
+note bottom
+路线图表达实现依赖顺序：
+先做当前页面宿主、页面注册表和快捷键切换器；
+再做 Preload / IPC / 权限等平台契约；
+再接本地服务和核心业务页。
+end note
+
+@enduml

@@ -1,0 +1,75 @@
+@startuml
+title 数据存储边界图
+
+skinparam componentStyle rectangle
+skinparam shadowing false
+
+package "Electron 应用数据" {
+  database "App SQLite" as AppDB
+  [应用配置]
+  [页面状态]
+  [最近项目]
+  [Agent 会话与任务日志]
+  [音乐元数据]
+}
+
+package "知识库数据" {
+  folder "Markdown / PDF / Web Clip / Obsidian Vault" as KnowledgeFiles
+  database "Keyword Index" as KeywordIndex
+  database "Vector Store" as VectorStore
+  [Chunk Metadata]
+}
+
+package "代码仓库数据" {
+  folder "本地 Code Repositories" as Repos
+  database "Code Index" as CodeIndex
+  [Git Metadata Cache]
+  [Dependency Graph Cache]
+}
+
+package "情报中心数据" {
+  database "local-intel SQLite" as IntelDB
+  folder "local-intel reports" as IntelReports
+  folder "local-intel logs" as IntelLogs
+  [config.toml]
+  [interests.toml]
+}
+
+package "Secrets 与外部配置" {
+  [Secrets Store]
+  [LLM Provider Config]
+  [API Keys / Tokens]
+}
+
+[应用配置] --> AppDB
+[页面状态] --> AppDB
+[最近项目] --> AppDB
+[Agent 会话与任务日志] --> AppDB
+[音乐元数据] --> AppDB
+
+KnowledgeFiles --> [Chunk Metadata]
+[Chunk Metadata] --> KeywordIndex
+[Chunk Metadata] --> VectorStore
+
+Repos --> CodeIndex
+Repos --> [Git Metadata Cache]
+Repos --> [Dependency Graph Cache]
+
+IntelDB --> AppDB : 只保存引用和聚合状态
+IntelReports --> AppDB : 只保存最近报告索引
+IntelLogs --> AppDB : 只保存状态摘要
+
+[LLM Provider Config] --> [Secrets Store]
+[API Keys / Tokens] --> [Secrets Store]
+
+note right of AppDB
+App SQLite 管 Electron 自身状态。
+不接管 local-intel 的原始情报数据库。
+end note
+
+note bottom of VectorStore
+Vector Store 是抽象边界。
+具体实现可在实现前再选择。
+end note
+
+@enduml

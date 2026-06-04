@@ -1,0 +1,87 @@
+@startuml
+title 现有 local-intel 情报中心接入方式
+
+skinparam componentStyle rectangle
+skinparam shadowing false
+
+package "Electron 桌面端" {
+  [情报中心页面] as IntelPage
+  [Home Dashboard] as Home
+  [window.api.intel] as ApiIntel
+  [window.api.system] as ApiSystem
+  [IPC Router] as Ipc
+  [Service Manager] as ServiceManager
+  [local-intel Service Adapter] as Adapter
+}
+
+package "local-intel 现有项目" {
+  [start_local_intel.ps1]
+  [stop_local_intel.ps1]
+  [status_local_intel.ps1]
+  [app.web]
+  [app.scheduler]
+  [app.pipeline]
+  [app.sources]
+  [app.summarizer]
+  [app.translator]
+  [app.watchlist]
+  database "data/intel.sqlite" as IntelDB
+  folder "reports" as Reports
+  folder "logs" as Logs
+  [config.toml / interests.toml / .env] as Config
+}
+
+cloud "信息源与 LLM" {
+  [GitHub Trending]
+  [GitHub Releases]
+  [arXiv]
+  [Hacker News]
+  [GDELT]
+  [RSS]
+  [MiMo / OpenAI-compatible]
+}
+
+IntelPage --> ApiIntel
+Home --> ApiIntel
+Home --> ApiSystem
+ApiIntel --> Ipc
+ApiSystem --> Ipc
+Ipc --> ServiceManager
+Ipc --> Adapter
+
+ServiceManager --> [start_local_intel.ps1] : 启动
+ServiceManager --> [stop_local_intel.ps1] : 停止
+ServiceManager --> [status_local_intel.ps1] : 状态
+
+Adapter --> [app.web] : 本地网页 / API
+Adapter --> IntelDB : 读取情报数据
+Adapter --> Reports : 查看报告
+Adapter --> Logs : 查看运行日志
+Adapter --> Config : 配置入口
+
+[app.scheduler] --> [app.pipeline]
+[app.pipeline] --> [app.sources]
+[app.pipeline] --> [app.summarizer]
+[app.pipeline] --> [app.translator]
+[app.pipeline] --> [app.watchlist]
+[app.pipeline] --> IntelDB
+[app.pipeline] --> Reports
+[app.pipeline] --> Logs
+
+[app.sources] --> [GitHub Trending]
+[app.sources] --> [GitHub Releases]
+[app.sources] --> [arXiv]
+[app.sources] --> [Hacker News]
+[app.sources] --> [GDELT]
+[app.sources] --> [RSS]
+[app.summarizer] --> [MiMo / OpenAI-compatible]
+[app.translator] --> [MiMo / OpenAI-compatible]
+[app.watchlist] --> [MiMo / OpenAI-compatible]
+
+note bottom of Adapter
+接入策略：复用现有 local-intel。
+Electron 负责启动、停止、健康检查、配置入口和数据展示。
+不在第一版重写抓取、摘要、翻译和观察雷达逻辑。
+end note
+
+@enduml

@@ -1,0 +1,85 @@
+@startuml
+title 桌面壳、快捷键页面切换与当前页面宿主
+
+skinparam componentStyle rectangle
+skinparam shadowing false
+
+package "Main BrowserWindow" {
+  [Current Page Host] as PageHost
+  [Page Switcher Overlay] as Switcher
+  [Minimal Status Bar] as StatusBar
+  [Task Center Overlay] as Tasks
+  [Settings Window / Page] as Settings
+}
+
+package "Keyboard Input" {
+  [Alt+1..8 Direct Switch] as DirectHotkeys
+  [Ctrl+Tab Cycle] as CycleHotkeys
+  [Alt+Space Open Switcher] as SwitcherHotkey
+  [Ctrl+K Command Palette] as CommandHotkey
+}
+
+package "Shell Services" {
+  [Shortcut Router] as ShortcutRouter
+  [Page Registry] as Registry
+  [Page State Store] as PageState
+  [Command Palette] as CommandPalette
+  [Service Status Store] as ServiceStatus
+  [Task Event Stream] as TaskStream
+}
+
+package "Registered Pages" {
+  [Home Dashboard]
+  [Agent Chat]
+  [Knowledge Base]
+  [Agent Management]
+  [Code Repository]
+  [Local Music]
+  [情报中心]
+  [小组件]
+}
+
+DirectHotkeys --> ShortcutRouter
+CycleHotkeys --> ShortcutRouter
+SwitcherHotkey --> ShortcutRouter
+CommandHotkey --> ShortcutRouter
+
+ShortcutRouter --> Registry
+ShortcutRouter --> Switcher
+ShortcutRouter --> CommandPalette
+
+Registry --> [Home Dashboard]
+Registry --> [Agent Chat]
+Registry --> [Knowledge Base]
+Registry --> [Agent Management]
+Registry --> [Code Repository]
+Registry --> [Local Music]
+Registry --> [情报中心]
+Registry --> [小组件]
+
+Switcher --> Registry
+Switcher --> PageHost : confirm selected page
+CommandPalette --> Registry
+CommandPalette --> PageHost : open page or command target
+
+[Home Dashboard] --> PageHost
+[Agent Chat] --> PageHost
+[Knowledge Base] --> PageHost
+[Agent Management] --> PageHost
+[Code Repository] --> PageHost
+[Local Music] --> PageHost
+[情报中心] --> PageHost
+[小组件] --> PageHost
+
+PageHost --> PageState : save / restore page state
+StatusBar --> ServiceStatus
+Tasks --> TaskStream
+Settings --> ShortcutRouter : remap shortcuts
+
+note bottom
+主窗口默认只显示 Current Page Host。
+Page Switcher Overlay 只在快捷键触发时临时出现，
+确认切换后关闭，不保留固定左侧导航。
+end note
+
+@enduml

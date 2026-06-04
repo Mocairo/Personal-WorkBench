@@ -1,0 +1,58 @@
+@startuml
+title LLM Provider Adapter 统一模型调用
+
+skinparam componentStyle rectangle
+skinparam shadowing false
+
+package "业务模块" {
+  [Agent Runtime]
+  [Knowledge RAG]
+  [Code Assistant]
+  [Intel Adapter]
+  [Voice Service]
+}
+
+package "LLM Provider Adapter" {
+  [Model Registry]
+  [Request Normalizer]
+  [Streaming Handler]
+  [Retry & Timeout Policy]
+  [Error Normalizer]
+  [Usage Logger]
+  [Secrets Resolver]
+}
+
+package "Provider Implementations" {
+  [OpenAI-compatible Provider]
+  [MiMo Provider]
+  [Local Model Provider]
+  [Embedding Provider]
+  [ASR Provider]
+  [TTS Provider]
+}
+
+database "App SQLite" as DB
+folder "Secrets Store" as Secrets
+
+[Agent Runtime] --> [Request Normalizer]
+[Knowledge RAG] --> [Request Normalizer]
+[Code Assistant] --> [Request Normalizer]
+[Intel Adapter] --> [Request Normalizer]
+[Voice Service] --> [Request Normalizer]
+
+[Request Normalizer] --> [Model Registry]
+[Request Normalizer] --> [Secrets Resolver]
+[Secrets Resolver] --> Secrets
+[Request Normalizer] --> [Retry & Timeout Policy]
+[Retry & Timeout Policy] --> [Streaming Handler]
+[Streaming Handler] --> [OpenAI-compatible Provider]
+[Streaming Handler] --> [MiMo Provider]
+[Streaming Handler] --> [Local Model Provider]
+[Streaming Handler] --> [Embedding Provider]
+[Streaming Handler] --> [ASR Provider]
+[Streaming Handler] --> [TTS Provider]
+[Streaming Handler] --> [Error Normalizer]
+[Error Normalizer] --> [Usage Logger]
+[Usage Logger] --> DB
+
+@enduml

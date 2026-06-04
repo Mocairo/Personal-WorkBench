@@ -1,0 +1,33 @@
+@startuml
+title Code Repository 扫描、解析、问答与结构图生成
+
+skinparam shadowing false
+
+start
+:用户选择本地代码仓库;
+:记录仓库路径与最近打开状态;
+fork
+  :Git CLI 读取分支、状态、日志、diff;
+fork again
+  :File Walker 遍历文件树并应用 ignore 规则;
+fork again
+  :ripgrep 建立快速搜索入口;
+end fork
+
+:Tree-sitter 解析函数、类、符号和文件结构;
+:Dependency Analyzer 分析 import、package metadata 和模块关系;
+:Code Index 写入结构索引;
+
+if (需要语义检索?) then (是)
+  :代码切片;
+  :Embedding Service 生成向量;
+  :写入 Vector Store;
+endif
+
+:用户查看目录树、依赖图、统计报告或提问;
+:Context Builder 选择代码上下文;
+:LLM Code Assistant 生成解释、摘要或建议;
+:PlantUML / Mermaid 输出结构图草稿;
+stop
+
+@enduml
