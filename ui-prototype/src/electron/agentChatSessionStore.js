@@ -152,6 +152,61 @@ function sanitizeToolResultsSummary(results = []) {
   })).filter((result) => result.summary || result.toolId);
 }
 
+function numberOrZero(value) {
+  return Number.isFinite(value) ? value : 0;
+}
+
+function sanitizeContextSummaryItems(items = []) {
+  return (Array.isArray(items) ? items : []).slice(0, 12).map((item) => ({
+    id: limitPersistedText(item.id, 120),
+    sourceType: limitPersistedText(item.sourceType ?? item.type ?? item.source, 80) || "session",
+    status: limitPersistedText(item.status ?? item.state, 80) || "used",
+    title: limitPersistedText(item.title ?? item.label ?? item.toolId, 160),
+  })).filter((item) => item.title || item.sourceType);
+}
+
+function sanitizeContextSummaryToolResults(items = []) {
+  return (Array.isArray(items) ? items : []).slice(0, 12).map((item) => ({
+    itemCount: numberOrZero(item.itemCount ?? item.resultCount),
+    label: limitPersistedText(item.label ?? item.title ?? item.toolId, 160),
+    sourceType: "tool",
+    status: limitPersistedText(item.status ?? item.state, 80) || "completed",
+    toolId: limitPersistedText(item.toolId, 120),
+  })).filter((item) => item.toolId || item.label);
+}
+
+function sanitizeContextSummary(summary = {}) {
+  if (!summary || typeof summary !== "object") {
+    return null;
+  }
+
+  const providerMetadata = sanitizeMetadata(summary.providerMetadata);
+  const limits = summary.limits && typeof summary.limits === "object"
+    ? {
+        maxChars: numberOrZero(summary.limits.maxChars),
+        maxItems: numberOrZero(summary.limits.maxItems),
+        maxMessages: numberOrZero(summary.limits.maxMessages),
+      }
+    : null;
+  const trimmed = summary.trimmed && typeof summary.trimmed === "object"
+    ? {
+        contextItems: numberOrZero(summary.trimmed.contextItems),
+        history: numberOrZero(summary.trimmed.history),
+        toolResults: numberOrZero(summary.trimmed.toolResults),
+      }
+    : null;
+  const contextSummary = {
+    ...(limits ? { limits } : {}),
+    ...(providerMetadata ? { providerMetadata } : {}),
+    ...(trimmed ? { trimmed } : {}),
+    usedContextItems: sanitizeContextSummaryItems(summary.usedContextItems),
+    usedHistoryCount: numberOrZero(summary.usedHistoryCount),
+    usedToolResults: sanitizeContextSummaryToolResults(summary.usedToolResults),
+  };
+
+  return Object.keys(contextSummary).length > 0 ? contextSummary : null;
+}
+
 async function readJsonFile(filePath) {
   try {
     const content = await fs.readFile(filePath, "utf8");
@@ -166,6 +221,7 @@ async function readJsonFile(filePath) {
 }
 
 function normalizeSession(session = {}, messages = [], createdAt = "", turn = {}) {
+  const contextSummary = sanitizeContextSummary(turn.contextSummary);
   const toolCalls = sanitizeToolCalls(turn.toolCalls);
   const toolPlan = sanitizeToolPlan(turn.toolPlan);
   const toolDecisions = sanitizeToolDecisions(turn.toolDecisions);
@@ -175,6 +231,7 @@ function normalizeSession(session = {}, messages = [], createdAt = "", turn = {}
 
   return {
     chatMessages: messages,
+    ...(contextSummary ? { contextSummary } : {}),
     contextItems: Array.isArray(session.contextItems) ? session.contextItems : [],
     ...(finalAnswer ? { finalAnswer } : {}),
     lastUpdated: createdAt,

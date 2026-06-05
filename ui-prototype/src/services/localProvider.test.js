@@ -26,9 +26,14 @@ import {
   providerName,
   runAgentChatDryMessage,
   searchKnowledgeLocal,
+  startKnowledgeIndex,
   sendAgentChatMessage,
   streamAgentChatMessage,
   cancelAgentChatStream,
+  attachKnowledgeContextToAgentChat,
+  clearAgentChatKnowledgeContexts,
+  listAgentChatKnowledgeContexts,
+  removeKnowledgeContextFromAgentChat,
   sendLlmTextMessage,
   validateLlmProviderConfig,
 } from "./localProvider";
@@ -88,6 +93,10 @@ describe("local provider", () => {
             data: { query, results: [{ id: "doc-readme", relativePath: "README.md" }], source: "local" },
             ok: true,
           }),
+          startIndex: async () => ({
+            data: { source: "knowledge-index", status: "ready", summary: { docs: 1 } },
+            ok: true,
+          }),
         },
       },
     };
@@ -103,6 +112,11 @@ describe("local provider", () => {
       id: "doc-readme",
       preview: "preview",
       relativePath: "README.md",
+    });
+    await expect(startKnowledgeIndex()).resolves.toMatchObject({
+      source: "knowledge-index",
+      status: "ready",
+      summary: { docs: 1 },
     });
   });
 
@@ -260,6 +274,30 @@ describe("local provider", () => {
             data: { requestId: input.requestId, status: "cancelled" },
             ok: true,
           }),
+          attachKnowledgeContext: async (input) => ({
+            data: {
+              attachedKnowledgeContexts: [{ contextId: "doc-1:chunk-1", title: input.title }],
+              sessionId: input.sessionId,
+              status: "saved",
+            },
+            ok: true,
+          }),
+          clearKnowledgeContexts: async (input) => ({
+            data: { attachedKnowledgeContexts: [], sessionId: input.sessionId, status: "cleared" },
+            ok: true,
+          }),
+          listKnowledgeContexts: async (input) => ({
+            data: {
+              attachedKnowledgeContexts: [{ contextId: "doc-1:chunk-1", title: "Docs" }],
+              sessionId: input.sessionId,
+              total: 1,
+            },
+            ok: true,
+          }),
+          removeKnowledgeContext: async (input) => ({
+            data: { attachedKnowledgeContexts: [], sessionId: input.sessionId, status: "removed" },
+            ok: true,
+          }),
           onStreamEvent: (requestId, callback) => {
             callback({ requestId, text: "Stream", token: "Stream", type: "token" });
             return () => {
@@ -309,6 +347,29 @@ describe("local provider", () => {
     await expect(cancelAgentChatStream({ requestId: "request-1" })).resolves.toEqual({
       requestId: "request-1",
       status: "cancelled",
+    });
+    await expect(attachKnowledgeContextToAgentChat({
+      documentId: "doc-1",
+      sessionId: "session-1",
+      title: "Docs",
+    })).resolves.toMatchObject({
+      attachedKnowledgeContexts: [{ contextId: "doc-1:chunk-1", title: "Docs" }],
+      status: "saved",
+    });
+    await expect(listAgentChatKnowledgeContexts({ sessionId: "session-1" })).resolves.toMatchObject({
+      attachedKnowledgeContexts: [{ contextId: "doc-1:chunk-1", title: "Docs" }],
+      total: 1,
+    });
+    await expect(removeKnowledgeContextFromAgentChat({
+      contextId: "doc-1:chunk-1",
+      sessionId: "session-1",
+    })).resolves.toMatchObject({
+      attachedKnowledgeContexts: [],
+      status: "removed",
+    });
+    await expect(clearAgentChatKnowledgeContexts({ sessionId: "session-1" })).resolves.toMatchObject({
+      attachedKnowledgeContexts: [],
+      status: "cleared",
     });
   });
 });

@@ -1,0 +1,283 @@
+- main [ref=e3]:
+  - region "Local desktop console prototype" [ref=e5]:
+    - generic [ref=e6]:
+      - generic [ref=e7]:
+        - img [ref=e9]
+        - generic [ref=e11]: Local Console
+        - generic [ref=e13]: Agent Chat
+      - generic "Window controls" [ref=e14]:
+        - button "Minimize" [ref=e15] [cursor=pointer]:
+          - img [ref=e16]
+        - button "Maximize" [ref=e21] [cursor=pointer]:
+          - img [ref=e22]
+        - button "Close" [ref=e27] [cursor=pointer]:
+          - img [ref=e28]
+    - navigation "Global shell controls" [ref=e31]:
+      - button "Agent Chat Alt Q" [ref=e497] [cursor=pointer]:
+        - img [ref=e498]
+        - generic [ref=e37]: Agent Chat
+        - generic [ref=e38]: Alt Q
+      - generic [ref=e39]:
+        - generic [ref=e40]: Indexing local sources
+        - generic [ref=e42]: Synced 2m ago
+        - generic [ref=e44]: Mock data bridge
+      - button "Command palette" [ref=e46] [cursor=pointer]:
+        - img [ref=e47]
+      - button "Settings" [active] [ref=e49] [cursor=pointer]:
+        - img [ref=e50]
+    - generic [ref=e500]:
+      - generic [ref=e501]:
+        - generic [ref=e502]:
+          - generic [ref=e503]: Agent Runtime
+          - heading "Agent Chat" [level=1] [ref=e504]
+        - generic [ref=e505]:
+          - generic [ref=e506]: "OpenAI-compatible: mock"
+          - generic [ref=e507]: memory local
+          - generic [ref=e508]: dry-run preview
+          - button "New Chat" [ref=e509] [cursor=pointer]:
+            - img [ref=e510]
+            - text: New Chat
+          - button "Tools" [ref=e511] [cursor=pointer]:
+            - img [ref=e512]
+            - text: Tools
+      - generic [ref=e513]:
+        - generic [ref=e514]:
+          - generic [ref=e515]:
+            - heading "Context" [level=2] [ref=e516]:
+              - img [ref=e517]
+              - text: Context
+            - generic [ref=e521]: 7 linked
+          - generic [ref=e522]:
+            - generic [ref=e523]:
+              - img [ref=e524]
+              - generic [ref=e527]:
+                - strong [ref=e528]: desktop-shell-navigation.puml
+                - generic [ref=e529]: session / 1 chunks / preview tokens
+              - time [ref=e530]: dry-run
+            - generic [ref=e531]:
+              - img [ref=e532]
+              - generic [ref=e535]:
+                - strong [ref=e536]: page-switcher-state-machine.puml
+                - generic [ref=e537]: session / 1 chunks / preview tokens
+              - time [ref=e538]: dry-run
+            - generic [ref=e632]:
+              - img [ref=e633]
+              - generic [ref=e636]:
+                - strong [ref=e637]: 桌面壳导航与全局体验
+                - generic [ref=e638]: kb / 1 chunks / preview tokens
+              - time [ref=e639]: dry-run
+            - generic [ref=e640]:
+              - img [ref=e641]
+              - generic [ref=e644]:
+                - strong [ref=e645]: 知识库详细需求
+                - generic [ref=e646]: kb / 1 chunks / preview tokens
+              - time [ref=e647]: dry-run
+            - generic [ref=e648]:
+              - img [ref=e649]
+              - generic [ref=e652]:
+                - strong [ref=e653]: Repository
+                - generic [ref=e654]: code / 1 chunks / preview tokens
+              - time [ref=e655]: dry-run
+            - generic [ref=e656]:
+              - img [ref=e657]
+              - generic [ref=e660]:
+                - strong [ref=e661]: 本地服务可靠性观察
+                - generic [ref=e662]: intel / 1 chunks / preview tokens
+              - time [ref=e663]: dry-run
+            - generic [ref=e664]:
+              - img [ref=e665]
+              - generic [ref=e668]:
+                - strong [ref=e669]: Research Curator
+                - generic [ref=e670]: agent / 1 chunks / preview tokens
+              - time [ref=e671]: dry-run
+          - generic [ref=e555]:
+            - text: Memory Scope
+            - strong [ref=e556]: Local workspace only
+            - paragraph [ref=e557]: Session memory is scoped to local files, local settings and the selected workspace.
+        - generic [ref=e558]:
+          - generic [ref=e559]:
+            - generic [ref=e560]:
+              - text: You
+              - paragraph [ref=e561]: 把桌面壳导航的需求整理成第一阶段验收点。
+              - generic [ref=e562]:
+                - generic [ref=e563]: local session
+                - generic [ref=e564]: context locked
+            - generic [ref=e565]:
+              - text: Agent
+              - paragraph [ref=e566]: 已从 Page Registry、快捷键、状态保留和任务中心四个方向归纳。
+              - generic [ref=e567]:
+                - generic [ref=e568]: tool ref 2
+                - generic [ref=e569]: draft
+            - generic [ref=e570]:
+              - text: You
+              - paragraph [ref=e571]: 再补一版面向实现的风险清单。
+              - generic [ref=e572]:
+                - generic [ref=e573]: local session
+                - generic [ref=e574]: context locked
+            - generic [ref=e672]:
+              - text: You
+              - paragraph [ref=e673]: search docs and show repo files
+              - generic [ref=e674]:
+                - generic [ref=e675]: local session
+                - generic [ref=e676]: draft
+            - generic [ref=e677]:
+              - text: Agent
+              - paragraph [ref=e678]: "Dry-run preview: I would answer using 7 local context item(s), without calling a real model."
+              - generic [ref=e679]:
+                - generic [ref=e680]: tool ref 5
+                - generic [ref=e681]: context locked
+          - generic [ref=e575]:
+            - img [ref=e576]
+            - textbox "Agent dry-run prompt" [ref=e579]:
+              - /placeholder: Ask about current workspace...
+            - generic [ref=e580]:
+              - generic [ref=e581]:
+                - checkbox "Auto-allow Level 1 read-only tools" [ref=e582]
+                - generic [ref=e583]: Auto L1
+              - button "Attach context" [ref=e584]:
+                - img [ref=e585]
+              - button "Tool mode" [ref=e588]:
+                - img [ref=e589]
+              - button "Voice input" [ref=e591]:
+                - img [ref=e592]
+            - button "Send prompt" [disabled] [ref=e596]:
+              - img [ref=e597]
+        - generic [ref=e600]:
+          - generic [ref=e601]:
+            - heading "Tool timeline" [level=2] [ref=e602]:
+              - img [ref=e603]
+              - text: Tool timeline
+            - generic [ref=e606]: guarded
+          - generic [ref=e684]:
+            - strong [ref=e685]: Knowledge Search
+            - generic [ref=e686]: Read-only preview allowed.
+            - generic [ref=e687]:
+              - generic [ref=e688]: dry-run
+              - generic [ref=e689]: Level 1 / allowed
+    - dialog "Settings" [ref=e690]:
+      - button "Dismiss settings overlay" [ref=e691]
+      - generic [ref=e692]:
+        - generic [ref=e693]:
+          - generic [ref=e694]:
+            - generic [ref=e695]: Local Sources
+            - heading "Settings" [level=2] [ref=e696]
+          - button "Close settings" [ref=e697] [cursor=pointer]:
+            - img [ref=e698]
+        - generic [ref=e701]:
+          - button "Sync sources" [ref=e702] [cursor=pointer]:
+            - img [ref=e703]
+            - text: Sync sources
+          - generic [ref=e708]:
+            - img [ref=e709]
+            - text: saved on selection
+        - generic [ref=e720]:
+          - generic [ref=e721]:
+            - generic [ref=e722]:
+              - heading "Local source map" [level=2] [ref=e723]:
+                - img [ref=e724]
+                - text: Local source map
+              - generic [ref=e728]: 2/6 ready
+            - generic [ref=e729]:
+              - generic [ref=e730]:
+                - img [ref=e732]
+                - generic [ref=e734]:
+                  - generic [ref=e735]:
+                    - strong [ref=e736]: Knowledge Base
+                    - generic [ref=e737]: Docs root
+                  - code [ref=e738]: Not configured
+                  - generic [ref=e739]:
+                    - generic [ref=e740]: directory
+                    - generic [ref=e741]: Using mock data
+                    - generic [ref=e742]: mock
+                - button "Choose" [ref=e743] [cursor=pointer]
+              - generic [ref=e744]:
+                - img [ref=e746]
+                - generic [ref=e748]:
+                  - generic [ref=e749]:
+                    - strong [ref=e750]: Code Repository
+                    - generic [ref=e751]: Code Repository
+                  - code [ref=e752]: Not configured
+                  - generic [ref=e753]:
+                    - generic [ref=e754]: directory
+                    - generic [ref=e755]: Using mock data
+                    - generic [ref=e756]: mock
+                - button "Choose" [ref=e757] [cursor=pointer]
+              - generic [ref=e758]:
+                - img [ref=e760]
+                - generic [ref=e762]:
+                  - generic [ref=e763]:
+                    - strong [ref=e764]: Intel Center
+                    - generic [ref=e765]: local-intel
+                  - code [ref=e766]: Not configured
+                  - generic [ref=e767]:
+                    - generic [ref=e768]: directory
+                    - generic [ref=e769]: Using mock data
+                    - generic [ref=e770]: mock
+                - button "Choose" [ref=e771] [cursor=pointer]
+              - generic [ref=e772]:
+                - img [ref=e774]
+                - generic [ref=e776]:
+                  - generic [ref=e777]:
+                    - strong [ref=e778]: Local Music
+                    - generic [ref=e779]: Music Library
+                  - code [ref=e780]: Not configured
+                  - generic [ref=e781]:
+                    - generic [ref=e782]: directory
+                    - generic [ref=e783]: Using mock data
+                    - generic [ref=e784]: mock
+                - button "Choose" [ref=e785] [cursor=pointer]
+              - generic [ref=e786]:
+                - img [ref=e788]
+                - generic [ref=e791]:
+                  - generic [ref=e792]:
+                    - strong [ref=e793]: Agent Chat
+                    - generic [ref=e794]: Local session
+                  - code [ref=e795]: agent-chat/session.json
+                  - generic [ref=e796]:
+                    - generic [ref=e797]: file
+                    - generic [ref=e798]: File ready
+                    - generic [ref=e799]: ready
+                - button "Choose" [ref=e800] [cursor=pointer]
+              - generic [ref=e801]:
+                - img [ref=e803]
+                - generic [ref=e806]:
+                  - generic [ref=e807]:
+                    - strong [ref=e808]: Agent Management
+                    - generic [ref=e809]: Agent config
+                  - code [ref=e810]: agents/agents.json
+                  - generic [ref=e811]:
+                    - generic [ref=e812]: file
+                    - generic [ref=e813]: File ready
+                    - generic [ref=e814]: ready
+                - button "Choose" [ref=e815] [cursor=pointer]
+          - generic [ref=e816]:
+            - generic [ref=e817]:
+              - heading "Source health" [level=2] [ref=e818]:
+                - img [ref=e819]
+                - text: Source health
+              - generic [ref=e822]: read only
+            - generic [ref=e823]:
+              - generic [ref=e824]:
+                - generic [ref=e825]: Total
+                - strong [ref=e826]: "6"
+              - generic [ref=e827]:
+                - generic [ref=e828]: Ready
+                - strong [ref=e829]: "2"
+              - generic [ref=e830]:
+                - generic [ref=e831]: Missing
+                - strong [ref=e832]: "0"
+              - generic [ref=e833]:
+                - generic [ref=e834]: Unconfigured
+                - strong [ref=e835]: "0"
+          - generic [ref=e836]:
+            - generic [ref=e837]:
+              - heading "Provider status" [level=2] [ref=e838]:
+                - img [ref=e839]
+                - text: Provider status
+              - generic [ref=e850]: masked only
+            - generic [ref=e851]:
+              - generic [ref=e852]: "Provider status: OpenAI-compatible / mock / not configured"
+              - generic [ref=e853]: "Model status: Model status / mock"
+              - generic [ref=e854]: "Secret status - LLM Provider: not configured"
+              - generic [ref=e855]: Renderer reads through preload API only
+              - generic [ref=e856]: No shell command or local-intel service is started here

@@ -16,8 +16,12 @@ describe("electron IPC channels", () => {
         previewContextPack: "agentChat:context:preview",
         previewToolPlan: "agentChat:toolPlan:preview",
         runDryMessage: "agentChat:message:runDry",
+        attachKnowledgeContext: "agentChat:knowledgeContext:attach",
         cancelStream: "agentChat:message:stream:cancel",
+        clearKnowledgeContexts: "agentChat:knowledgeContext:clear",
         sendMessage: "agentChat:message:send",
+        listKnowledgeContexts: "agentChat:knowledgeContext:list",
+        removeKnowledgeContext: "agentChat:knowledgeContext:remove",
         streamMessage: "agentChat:message:stream",
       },
       knowledge: { getKnowledgeBase: "knowledge:getKnowledgeBase" },
@@ -91,6 +95,10 @@ describe("electron IPC channels", () => {
       "previewAgentChatContextPack",
       "previewAgentChatToolPlan",
       "runAgentChatDryMessage",
+      "attachKnowledgeContextToAgentChat",
+      "clearAgentChatKnowledgeContexts",
+      "listAgentChatKnowledgeContexts",
+      "removeKnowledgeContextFromAgentChat",
       "cancelAgentChatStream",
       "sendAgentChatMessage",
       "streamAgentChatMessage",
@@ -121,6 +129,7 @@ describe("electron IPC channels", () => {
       "getKnowledgeIndexStatus",
       "searchKnowledgeLocal",
       "getKnowledgeDocumentPreview",
+      "startKnowledgeIndex",
       "listAgents",
       "listAgentSessions",
       "getMusicPlaybackState",
@@ -154,10 +163,20 @@ describe("electron IPC channels", () => {
     expect(IPC_METHODS.find((item) => item.channel === "agentChat:message:stream:cancel")).toMatchObject({
       providerMethod: "cancelAgentChatStream",
     });
+    expect(IPC_METHODS.find((item) => item.channel === "agentChat:knowledgeContext:attach")).toMatchObject({
+      providerMethod: "attachKnowledgeContextToAgentChat",
+    });
+    expect(IPC_METHODS.find((item) => item.channel === "agentChat:knowledgeContext:list")).toMatchObject({
+      providerMethod: "listAgentChatKnowledgeContexts",
+    });
     expect(IPC_METHODS.find((item) => item.channel === "tool:execute")).toMatchObject({
       permission: "denied",
       providerMethod: "executeTool",
     });
+    expect(IPC_METHODS.find((item) => item.channel === "kb:index:start")).toMatchObject({
+      providerMethod: "startKnowledgeIndex",
+    });
+    expect(IPC_METHODS.find((item) => item.channel === "kb:index:start").permission).toBeUndefined();
     expect(IPC_WINDOW_CHANNELS).toEqual({
       close: "window:close",
       maximize: "window:maximize",

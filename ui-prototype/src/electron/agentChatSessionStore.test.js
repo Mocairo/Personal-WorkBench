@@ -206,4 +206,104 @@ describe("agent chat userData session store", () => {
     expect(persisted).not.toMatch(/sk-|apiKey|token|secret|Authorization|requestHeaders|D:\\private/i);
     expect(persisted).not.toContain("A".repeat(800));
   });
+
+  it("persists compact context summary without secrets, headers or raw absolute paths", async () => {
+    const userDataDir = await fs.mkdtemp(path.join(os.tmpdir(), "agent-chat-context-session-"));
+
+    await appendAgentChatSessionTurn(
+      {
+        assistantMessage: {
+          metadata: {
+            model: "gpt-4.1-mini",
+            provider: "openai",
+            toolCalls: 1,
+          },
+          role: "assistant",
+          text: "Context-aware answer.",
+        },
+        contextSummary: {
+          limits: {
+            maxChars: 4000,
+            maxItems: 6,
+            maxMessages: 4,
+          },
+          providerMetadata: {
+            apiKey: "sk-context-provider-secret",
+            model: "gpt-4.1-mini",
+            provider: "openai",
+            requestHeaders: { Authorization: "Bearer sk-context-header" },
+            toolCalls: 1,
+          },
+          trimmed: {
+            contextItems: 1,
+            history: 2,
+            toolResults: 0,
+          },
+          usedContextItems: [
+            {
+              sourceType: "knowledge",
+              status: "used",
+              title: "D:\\private\\kb\\doc.md apiKey=sk-context-title",
+            },
+          ],
+          usedHistoryCount: 2,
+          usedToolResults: [
+            {
+              label: "Knowledge Search token=sk-tool-label",
+              sourceType: "tool",
+              status: "completed",
+              toolId: "kb.searchLocal",
+            },
+          ],
+        },
+        createdAt: "2026-06-04T12:00:00.000Z",
+        toolResultsSummary: [
+          { status: "completed", summary: "Knowledge Search summary.", toolId: "kb.searchLocal" },
+        ],
+        userMessage: {
+          role: "user",
+          text: "Use memory.",
+        },
+      },
+      { userDataDir },
+    );
+
+    const persisted = await fs.readFile(getAgentChatUserDataSessionPath({ userDataDir }), "utf8");
+    const parsed = JSON.parse(persisted);
+
+    expect(parsed.contextSummary).toMatchObject({
+      limits: {
+        maxChars: 4000,
+        maxItems: 6,
+        maxMessages: 4,
+      },
+      providerMetadata: {
+        model: "gpt-4.1-mini",
+        provider: "openai",
+        toolCalls: 1,
+      },
+      trimmed: {
+        contextItems: 1,
+        history: 2,
+        toolResults: 0,
+      },
+      usedContextItems: [
+        expect.objectContaining({
+          sourceType: "knowledge",
+          status: "used",
+          title: "[redacted-path] [redacted]",
+        }),
+      ],
+      usedHistoryCount: 2,
+      usedToolResults: [
+        expect.objectContaining({
+          label: "Knowledge Search [redacted]",
+          sourceType: "tool",
+          status: "completed",
+          toolId: "kb.searchLocal",
+        }),
+      ],
+    });
+    expect(persisted).not.toMatch(/sk-|apiKey|token|secret|Authorization|requestHeaders|D:\\private/i);
+  });
 });

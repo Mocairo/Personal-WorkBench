@@ -10,8 +10,10 @@ import {
   ShieldCheck,
   SlidersHorizontal,
   TerminalSquare,
+  Trash2,
   WandSparkles,
   Wrench,
+  X,
 } from "lucide-react";
 import { EmptyState } from "../components/ui/EmptyState";
 import { GlassPanel } from "../components/ui/GlassPanel";
@@ -34,16 +36,107 @@ const toolMeta = [
   { duration: "queued", permission: "network blocked" },
 ];
 
-function getContextTitle(item) {
-  if (typeof item === "string") {
-    return item;
+const DISPLAY_SECRET_ASSIGNMENT_PATTERN = /\b(api[_-]?key|token|secret|password)\s*[:=]\s*[^\s,;]+/gi;
+const DISPLAY_AUTHORIZATION_PATTERN = /\bAuthorization:\s*Bearer\s+[^\s,;]+/gi;
+const DISPLAY_OPENAI_KEY_PATTERN = /\bsk-[A-Za-z0-9_-]+/g;
+const DISPLAY_WINDOWS_PATH_PATTERN = /\b[A-Za-z]:\\[^\s"']+/g;
+
+function redactDisplayText(value) {
+  if (typeof value !== "string") {
+    return "";
   }
 
-  return item?.title ?? item?.label ?? item?.relativePath ?? item?.path ?? "Local context";
+  return value
+    .replace(DISPLAY_AUTHORIZATION_PATTERN, "[redacted]")
+    .replace(DISPLAY_SECRET_ASSIGNMENT_PATTERN, "[redacted]")
+    .replace(DISPLAY_OPENAI_KEY_PATTERN, "[redacted]")
+    .replace(DISPLAY_WINDOWS_PATH_PATTERN, "[redacted-path]");
 }
 
-export function getContextRows(contextItems = []) {
-  return contextItems.map((item, index) => {
+function getContextTitle(item) {
+  if (typeof item === "string") {
+    return redactDisplayText(item);
+  }
+
+  return redactDisplayText(item?.title ?? item?.label ?? item?.relativePath ?? item?.path ?? "Local context");
+}
+
+function getContextSummaryRows(contextSummary = null) {
+  if (!contextSummary || typeof contextSummary !== "object") {
+    return [];
+  }
+
+  const rows = [];
+  if (contextSummary.usedHistoryCount > 0) {
+    rows.push({
+      active: true,
+      chunks: contextSummary.usedHistoryCount,
+      title: "Session memory",
+      tokens: "history",
+      type: "session",
+      updated: "current run",
+    });
+  }
+
+  if (Array.isArray(contextSummary.usedContextItems)) {
+    contextSummary.usedContextItems.forEach((item) => {
+      rows.push({
+        active: true,
+        chunks: 1,
+        title: redactDisplayText(item.title ?? item.label ?? item.sourceType ?? "Context source"),
+        tokens: redactDisplayText(item.status ?? "used"),
+        type: redactDisplayText(item.sourceType ?? item.type ?? "context"),
+        updated: "context",
+      });
+    });
+  }
+
+  if (Array.isArray(contextSummary.usedToolResults)) {
+    contextSummary.usedToolResults.forEach((item) => {
+      rows.push({
+        active: true,
+        chunks: item.itemCount ?? 1,
+        title: redactDisplayText(item.label ?? item.toolId ?? "Tool result"),
+        tokens: redactDisplayText(item.status ?? "completed"),
+        type: "tool",
+        updated: "tool",
+      });
+    });
+  }
+
+  const trimmed = contextSummary.trimmed && typeof contextSummary.trimmed === "object"
+    ? contextSummary.trimmed
+    : {};
+  const trimmedCount = (trimmed.history ?? 0) + (trimmed.contextItems ?? 0) + (trimmed.toolResults ?? 0);
+  if (trimmedCount > 0) {
+    rows.push({
+      active: false,
+      chunks: trimmedCount,
+      title: "Budget trimmed",
+      tokens: `${trimmed.history ?? 0}/${trimmed.contextItems ?? 0}/${trimmed.toolResults ?? 0}`,
+      type: "audit",
+      updated: "budget",
+    });
+  }
+
+  return rows;
+}
+
+function getAttachedContextRows(attachedKnowledgeContexts = []) {
+  return (Array.isArray(attachedKnowledgeContexts) ? attachedKnowledgeContexts : []).map((item) => ({
+    active: true,
+    attached: true,
+    chunks: 1,
+    contextId: redactDisplayText(item.contextId ?? item.id),
+    title: redactDisplayText(item.title ?? item.relativePath ?? "Attached knowledge"),
+    tokens: `${redactDisplayText(item.matchType ?? "attached")} / ${Number.isFinite(item.score) ? item.score : 1}`,
+    type: redactDisplayText(item.sourceType ?? "knowledge"),
+    updated: redactDisplayText(item.relativePath ?? item.updatedAt ?? "attached"),
+  }));
+}
+
+export function getContextRows(contextItems = [], contextSummary = null, attachedKnowledgeContexts = []) {
+  const rows = contextItems.map((item, index) => {
     const fallback = contextMeta[index % contextMeta.length];
     const title = getContextTitle(item);
 
@@ -64,6 +157,24 @@ export function getContextRows(contextItems = []) {
       updated: item.updated ?? item.updatedAt ?? item.time ?? fallback.updated,
     };
   });
+
+  return [
+    ...getAttachedContextRows(attachedKnowledgeContexts),
+    ...rows,
+    ...getContextSummaryRows(contextSummary),
+  ];
+}
+
+export function mergeAttachedKnowledgeContextResultIntoChatData(data = {}, result = {}) {
+  const attachedKnowledgeContexts = Array.isArray(result.attachedKnowledgeContexts)
+    ? result.attachedKnowledgeContexts
+    : [];
+
+  return {
+    ...data,
+    attachedKnowledgeContextCount: Number.isFinite(result.total) ? result.total : attachedKnowledgeContexts.length,
+    attachedKnowledgeContexts,
+  };
 }
 
 export function getTimelineRows(toolCalls = []) {
@@ -399,10 +510,11 @@ export function AgentChat() {
   const [activeRequestId, setActiveRequestId] = useState(null);
   const [autoAllowLevel1ReadOnly, setAutoAllowLevel1ReadOnly] = useState(false);
   const displayData = dryRunData ?? data;
-  const { chatMessages, contextItems, toolCalls } = displayData;
+  const { attachedKnowledgeContexts = [], chatMessages, contextItems, toolCalls } = displayData;
   const chatStatus = getChatStatusSummary(displayData);
   const composerState = getComposerSendState(composerText, chatStatus.sendEnabled);
-  const contextRows = getContextRows(contextItems);
+  const contextSummary = displayData.sendResult?.contextSummary ?? displayData.contextSummary;
+  const contextRows = getContextRows(contextItems, contextSummary, attachedKnowledgeContexts);
   const timelineRows = getTimelineRows(toolCalls);
   const toolApprovalState = getToolApprovalState(timelineRows);
 
@@ -539,6 +651,33 @@ export function AgentChat() {
     }
   };
 
+  const removeAttachedContext = async (context) => {
+    try {
+      const result = await dataProvider.removeKnowledgeContextFromAgentChat({
+        contextId: context.contextId,
+        sessionId: displayData.session?.sessionId,
+      });
+      setDryRunData((current) => mergeAttachedKnowledgeContextResultIntoChatData(current ?? displayData, result));
+      setDryRunStatus("context removed");
+    } catch (error) {
+      setDryRunData((current) => mergeSendErrorIntoChatData(current ?? displayData, error));
+      setDryRunStatus(error?.message ?? "remove unavailable");
+    }
+  };
+
+  const clearAttachedContexts = async () => {
+    try {
+      const result = await dataProvider.clearAgentChatKnowledgeContexts({
+        sessionId: displayData.session?.sessionId,
+      });
+      setDryRunData((current) => mergeAttachedKnowledgeContextResultIntoChatData(current ?? displayData, result));
+      setDryRunStatus("contexts cleared");
+    } catch (error) {
+      setDryRunData((current) => mergeSendErrorIntoChatData(current ?? displayData, error));
+      setDryRunStatus(error?.message ?? "clear unavailable");
+    }
+  };
+
   return (
     <PageFrame
       eyebrow="Agent Runtime"
@@ -548,6 +687,9 @@ export function AgentChat() {
         <>
           <span className="settings-save-state">
             {chatStatus.providerLabel}: {chatStatus.providerStatus}
+          </span>
+          <span className="settings-save-state">
+            {contextSummary ? "memory/context used" : "memory local"}
           </span>
           <span className="settings-save-state">{dryRunStatus}</span>
           <button className="soft-button" type="button">
@@ -578,10 +720,26 @@ export function AgentChat() {
                     </small>
                   </div>
                   <time>{item.updated}</time>
+                  {item.attached ? (
+                    <button
+                      aria-label={`Remove attached context ${item.title}`}
+                      className="icon-button ghost"
+                      onClick={() => removeAttachedContext(item)}
+                      type="button"
+                    >
+                      <X size={13} />
+                    </button>
+                  ) : null}
                 </div>
               ))
             )}
           </div>
+          {attachedKnowledgeContexts.length > 0 ? (
+            <button className="soft-button muted" onClick={clearAttachedContexts} type="button">
+              <Trash2 size={14} />
+              Clear attached
+            </button>
+          ) : null}
           <div className="memory-card">
             <span>Memory Scope</span>
             <strong>Local workspace only</strong>

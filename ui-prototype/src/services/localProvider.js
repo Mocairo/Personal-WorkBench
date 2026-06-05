@@ -68,6 +68,22 @@ export async function cancelAgentChatStream(input) {
   return callRuntimeMethod("agentChat", "cancelStream", input);
 }
 
+export async function attachKnowledgeContextToAgentChat(input) {
+  return callRuntimeMethod("agentChat", "attachKnowledgeContext", input);
+}
+
+export async function listAgentChatKnowledgeContexts(input) {
+  return callRuntimeMethod("agentChat", "listKnowledgeContexts", input);
+}
+
+export async function removeKnowledgeContextFromAgentChat(input) {
+  return callRuntimeMethod("agentChat", "removeKnowledgeContext", input);
+}
+
+export async function clearAgentChatKnowledgeContexts(input) {
+  return callRuntimeMethod("agentChat", "clearKnowledgeContexts", input);
+}
+
 export async function getKnowledgeBase() {
   return callRuntimeMethod("knowledge", "getKnowledgeBase");
 }
@@ -130,6 +146,10 @@ export async function getKnowledgeIndexStatus() {
 
 export async function searchKnowledgeLocal(query) {
   return callRuntimeMethod("kb", "searchLocal", query);
+}
+
+export async function startKnowledgeIndex() {
+  return callRuntimeMethod("kb", "startIndex");
 }
 
 export async function getKnowledgeDocumentPreview(documentId) {

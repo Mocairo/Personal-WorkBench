@@ -48,6 +48,7 @@ import {
 } from "../data/mockData.js";
 
 export const providerName = "mock";
+const mockAttachedKnowledgeContexts = [];
 
 function mockSourceHealth(id, label) {
   return buildSourceHealth({ id, label, mock: true, path: "" });
@@ -145,6 +146,8 @@ export async function getHomeDashboard() {
 
 export function getMockAgentChatData() {
   return {
+    attachedKnowledgeContextCount: mockAttachedKnowledgeContexts.length,
+    attachedKnowledgeContexts: mockAttachedKnowledgeContexts,
     chatMessages,
     contextItems,
     llmProviderStatus: getMockLlmProvidersData()[0],
@@ -330,6 +333,72 @@ export async function cancelAgentChatStream(input = {}) {
   };
 }
 
+function mockContextId(input = {}) {
+  return input.contextId || `${input.documentId || input.id || "mock-doc"}:${input.chunkId || "document"}`;
+}
+
+export async function attachKnowledgeContextToAgentChat(input = {}) {
+  const context = {
+    chunkId: input.chunkId || "",
+    contextId: mockContextId(input),
+    documentId: input.documentId || input.id || "mock-doc",
+    matchType: input.matchType || "document",
+    preview: redactDryRunText(input.preview || input.excerpt || "Mock attached knowledge context."),
+    relativePath: redactDryRunText(input.relativePath || "mock/attached.md"),
+    score: Number.isFinite(input.score) ? input.score : 1,
+    sourceType: "knowledge",
+    title: redactDryRunText(input.title || "Mock Knowledge Context"),
+    updatedAt: input.updatedAt || null,
+  };
+  const index = mockAttachedKnowledgeContexts.findIndex((item) => item.contextId === context.contextId);
+  if (index >= 0) {
+    mockAttachedKnowledgeContexts.splice(index, 1, context);
+  } else {
+    mockAttachedKnowledgeContexts.unshift(context);
+  }
+
+  return {
+    attachedKnowledgeContexts: mockAttachedKnowledgeContexts,
+    sessionId: input.sessionId || "local-session",
+    status: "saved",
+    total: mockAttachedKnowledgeContexts.length,
+  };
+}
+
+export async function listAgentChatKnowledgeContexts(input = {}) {
+  return {
+    attachedKnowledgeContexts: mockAttachedKnowledgeContexts,
+    sessionId: input.sessionId || "local-session",
+    status: "ready",
+    total: mockAttachedKnowledgeContexts.length,
+  };
+}
+
+export async function removeKnowledgeContextFromAgentChat(input = {}) {
+  const contextId = mockContextId(input);
+  const index = mockAttachedKnowledgeContexts.findIndex((item) => item.contextId === contextId);
+  if (index >= 0) {
+    mockAttachedKnowledgeContexts.splice(index, 1);
+  }
+
+  return {
+    attachedKnowledgeContexts: mockAttachedKnowledgeContexts,
+    sessionId: input.sessionId || "local-session",
+    status: "removed",
+    total: mockAttachedKnowledgeContexts.length,
+  };
+}
+
+export async function clearAgentChatKnowledgeContexts(input = {}) {
+  mockAttachedKnowledgeContexts.splice(0);
+  return {
+    attachedKnowledgeContexts: [],
+    sessionId: input.sessionId || "local-session",
+    status: "cleared",
+    total: 0,
+  };
+}
+
 export function getMockKnowledgeBaseData() {
   const documents = getMockKnowledgeDocuments();
 
@@ -387,6 +456,21 @@ export async function searchKnowledgeLocal(query = "") {
     results,
     source: "mock",
     total: results.length,
+  };
+}
+
+export async function startKnowledgeIndex() {
+  return {
+    source: "mock",
+    status: "mock",
+    summary: {
+      chunks: 0,
+      docs: getMockKnowledgeDocuments().length,
+      failed: 0,
+      indexed: getMockKnowledgeDocuments().length,
+      scanned: getMockKnowledgeDocuments().length,
+      skipped: 0,
+    },
   };
 }
 

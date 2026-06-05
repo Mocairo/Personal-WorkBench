@@ -6,6 +6,7 @@ import {
   getTimelineRows,
   getToolApprovalState,
   mergeDryRunResultIntoChatData,
+  mergeAttachedKnowledgeContextResultIntoChatData,
   mergeSendErrorIntoChatData,
   mergeStreamEventIntoChatData,
   mergeStreamResultIntoChatData,
@@ -32,6 +33,112 @@ describe("AgentChat page data binding helpers", () => {
       tokens: "2.4k",
       type: "doc",
       updated: "2026-06-03T10:00:00.000Z",
+    });
+  });
+
+  it("adds compact context summary rows without exposing unsafe display text", () => {
+    const rows = getContextRows(
+      [],
+      {
+        trimmed: {
+          contextItems: 1,
+          history: 2,
+          toolResults: 0,
+        },
+        usedContextItems: [
+          {
+            sourceType: "knowledge",
+            status: "used",
+            title: "D:\\private\\kb\\doc.md apiKey=sk-context-title",
+          },
+        ],
+        usedHistoryCount: 2,
+        usedToolResults: [
+          {
+            label: "Knowledge Search token=sk-tool-label",
+            sourceType: "tool",
+            status: "completed",
+            toolId: "kb.searchLocal",
+          },
+        ],
+      },
+    );
+
+    expect(rows).toEqual([
+      expect.objectContaining({
+        active: true,
+        title: "Session memory",
+        type: "session",
+      }),
+      expect.objectContaining({
+        title: "[redacted-path] [redacted]",
+        type: "knowledge",
+      }),
+      expect.objectContaining({
+        title: "Knowledge Search [redacted]",
+        type: "tool",
+      }),
+      expect.objectContaining({
+        title: "Budget trimmed",
+        type: "audit",
+      }),
+    ]);
+    expect(JSON.stringify(rows)).not.toMatch(/sk-|apiKey|token=|D:\\private|Authorization/i);
+  });
+
+  it("shows attached knowledge contexts before ordinary context rows", () => {
+    const rows = getContextRows(
+      [
+        {
+          chunks: 2,
+          title: "Ordinary context",
+          type: "session",
+        },
+      ],
+      null,
+      [
+        {
+          contextId: "doc-1:chunk-1",
+          matchType: "hybrid",
+          preview: "Pinned apiKey=sk-attached-preview",
+          relativePath: "D:\\private\\vault\\doc.md",
+          score: 9.5,
+          sourceType: "knowledge",
+          title: "Pinned KB token=sk-attached-title",
+        },
+      ],
+    );
+
+    expect(rows[0]).toMatchObject({
+      attached: true,
+      contextId: "doc-1:chunk-1",
+      title: "Pinned KB [redacted]",
+      tokens: "hybrid / 9.5",
+      type: "knowledge",
+      updated: "[redacted-path]",
+    });
+    expect(rows[1]).toMatchObject({ title: "Ordinary context" });
+    expect(JSON.stringify(rows)).not.toMatch(/sk-attached|apiKey|token=|D:\\private/);
+  });
+
+  it("updates attached knowledge contexts after remove or clear results", () => {
+    const updated = mergeAttachedKnowledgeContextResultIntoChatData(
+      {
+        attachedKnowledgeContextCount: 1,
+        attachedKnowledgeContexts: [{ contextId: "old", title: "Old" }],
+        chatMessages: [],
+        contextItems: [],
+        toolCalls: [],
+      },
+      {
+        attachedKnowledgeContexts: [{ contextId: "new", title: "New" }],
+        total: 1,
+      },
+    );
+
+    expect(updated).toMatchObject({
+      attachedKnowledgeContextCount: 1,
+      attachedKnowledgeContexts: [{ contextId: "new", title: "New" }],
     });
   });
 

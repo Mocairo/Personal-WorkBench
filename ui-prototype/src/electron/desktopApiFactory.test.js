@@ -19,6 +19,10 @@ describe("desktop API factory", () => {
       data: { channel: "kb:source:list" },
       ok: true,
     });
+    await expect(api.kb.startIndex()).resolves.toEqual({
+      data: { channel: "kb:index:start" },
+      ok: true,
+    });
     await expect(api.codeRepo.getGitSummary("local-root")).resolves.toEqual({
       data: { args: ["local-root"], channel: "codeRepo:git:summary" },
       ok: true,
@@ -75,10 +79,19 @@ describe("desktop API factory", () => {
       data: { args: [{ userText: "Hello" }], channel: "agentChat:message:send" },
       ok: true,
     });
+    await expect(api.agentChat.attachKnowledgeContext({ documentId: "doc-1" })).resolves.toEqual({
+      data: { args: [{ documentId: "doc-1" }], channel: "agentChat:knowledgeContext:attach" },
+      ok: true,
+    });
+    await expect(api.agentChat.listKnowledgeContexts({ sessionId: "session-1" })).resolves.toEqual({
+      data: { args: [{ sessionId: "session-1" }], channel: "agentChat:knowledgeContext:list" },
+      ok: true,
+    });
 
     expect(calls).toEqual([
       { args: [], channel: "system:app:status" },
       { args: [], channel: "kb:source:list" },
+      { args: [], channel: "kb:index:start" },
       { args: ["local-root"], channel: "codeRepo:git:summary" },
       { args: [], channel: "agent:agent:list" },
       { args: [], channel: "intel:service:status" },
@@ -93,6 +106,8 @@ describe("desktop API factory", () => {
       { args: [], channel: "dashboard:getHomeDashboard" },
       { args: [{ userText: "dry run" }], channel: "agentChat:message:runDry" },
       { args: [{ userText: "Hello" }], channel: "agentChat:message:send" },
+      { args: [{ documentId: "doc-1" }], channel: "agentChat:knowledgeContext:attach" },
+      { args: [{ sessionId: "session-1" }], channel: "agentChat:knowledgeContext:list" },
     ]);
   });
 

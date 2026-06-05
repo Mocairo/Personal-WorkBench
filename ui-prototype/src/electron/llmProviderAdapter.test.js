@@ -220,6 +220,57 @@ describe("LLM provider adapter", () => {
     expect(JSON.stringify(result)).not.toMatch(/sk-send-secret|apiKey|Authorization/);
   });
 
+  it("uses prebuilt sanitized messages when the main process provides LLM context", async () => {
+    const transport = vi.fn(async () => ({
+      json: async () => ({
+        choices: [
+          {
+            finish_reason: "stop",
+            message: {
+              content: "Context-aware reply.",
+              role: "assistant",
+            },
+          },
+        ],
+        id: "chatcmpl-context-test",
+        model: "gpt-4.1-mini",
+      }),
+      ok: true,
+      status: 200,
+    }));
+
+    await sendLlmTextMessage(
+      {
+        messages: [
+          { role: "system", content: "Use bounded local context." },
+          { role: "user", content: "Earlier session says Settings overlay stays put." },
+          { role: "assistant", content: "I remember the overlay constraint." },
+          { role: "user", content: "Final question apiKey=sk-user-secret D:\\private\\prompt.txt" },
+        ],
+        userText: "This fallback text should not be sent.",
+      },
+      {
+        config: {
+          apiKey: "sk-send-secret",
+          baseUrl: "https://gateway.example.test/v1",
+          model: "gpt-4.1-mini",
+          provider: "openai",
+        },
+        transport,
+      },
+    );
+
+    const requestBody = JSON.parse(transport.mock.calls[0][1].body);
+    expect(requestBody.messages).toEqual([
+      { role: "system", content: "Use bounded local context." },
+      { role: "user", content: "Earlier session says Settings overlay stays put." },
+      { role: "assistant", content: "I remember the overlay constraint." },
+      { role: "user", content: "Final question [redacted] [redacted-path]" },
+    ]);
+    expect(JSON.stringify(requestBody.messages)).not.toContain("This fallback text should not be sent.");
+    expect(JSON.stringify(requestBody.messages)).not.toMatch(/sk-user-secret|apiKey|D:\\private|Authorization/);
+  });
+
   it("wraps provider API failures as ApiResult errors without leaking secrets", async () => {
     const transport = vi.fn(async () => ({
       json: async () => ({

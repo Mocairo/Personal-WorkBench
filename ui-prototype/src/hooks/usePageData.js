@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { dataProvider } from "../services/dataProvider";
 import {
   getMockAgentChatData,
@@ -12,7 +12,7 @@ import {
 } from "../services/mockProvider";
 
 function useProviderData(provider, loadData, initialData) {
-  const [revision, setRevision] = useState(0);
+  const latestDataRef = useRef(initialData);
   const [state, setState] = useState({
     data: initialData,
     loading: true,
@@ -27,6 +27,7 @@ function useProviderData(provider, loadData, initialData) {
     loadProviderDataWithFallback(provider, loadData, state.data)
       .then((nextState) => {
         if (mounted) {
+          latestDataRef.current = nextState.data;
           setState(nextState);
         }
       });
@@ -34,9 +35,15 @@ function useProviderData(provider, loadData, initialData) {
     return () => {
       mounted = false;
     };
-  }, [provider, loadData, revision]);
+  }, [provider, loadData]);
 
-  const reload = useCallback(() => setRevision((value) => value + 1), []);
+  const reload = useCallback(async () => {
+    setState((current) => ({ ...current, loading: true, error: null }));
+    const nextState = await loadProviderDataWithFallback(provider, loadData, latestDataRef.current);
+    latestDataRef.current = nextState.data;
+    setState(nextState);
+    return nextState;
+  }, [provider, loadData]);
 
   return { ...state, reload };
 }

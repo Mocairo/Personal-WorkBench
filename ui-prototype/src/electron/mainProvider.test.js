@@ -610,6 +610,112 @@ describe("main process data provider", () => {
     expect(llmClient).not.toHaveBeenCalled();
   });
 
+  it("passes recent persisted Agent Chat history through the Context Builder into LLM messages", async () => {
+    const userDataDir = await fs.mkdtemp(path.join(os.tmpdir(), "main-provider-context-user-data-"));
+    const persistedPath = path.join(userDataDir, "sessions", "agent-chat-session.json");
+    await fs.mkdir(path.dirname(persistedPath), { recursive: true });
+    await fs.writeFile(
+      persistedPath,
+      JSON.stringify({
+        chatMessages: [
+          { role: "user", text: "Old message token=sk-old-secret D:\\private\\old.txt" },
+          { role: "assistant", text: "Old answer" },
+          { role: "user", text: "Settings must stay as a floating overlay." },
+          { role: "assistant", text: "I will keep Settings as a floating overlay." },
+        ],
+        contextItems: [
+          { title: "Session note", type: "session", summary: "Page Switcher has 8 cards." },
+        ],
+        session: { id: "session-context", title: "Context session" },
+      }),
+    );
+    const llmClient = vi.fn(async () => ({
+      data: {
+        metadata: { model: "gpt-4.1-mini", provider: "openai", toolCalls: 0 },
+        role: "assistant",
+        text: "Memory-aware answer.",
+      },
+      ok: true,
+    }));
+    const provider = createMainDataProvider({
+      agentChatContextLimits: {
+        maxChars: 4000,
+        maxItems: 6,
+        maxMessages: 2,
+      },
+      llmClient,
+      userDataDir,
+    });
+
+    const result = await provider.sendAgentChatMessage({
+      sessionId: "session-context",
+      userText: "Use the remembered UI constraints.",
+    });
+
+    const messages = llmClient.mock.calls[0][0].messages;
+    expect(messages).toEqual(expect.arrayContaining([
+      expect.objectContaining({ content: "Settings must stay as a floating overlay.", role: "user" }),
+      expect.objectContaining({ content: "I will keep Settings as a floating overlay.", role: "assistant" }),
+      expect.objectContaining({ content: "Use the remembered UI constraints.", role: "user" }),
+    ]));
+    expect(messages.at(-1)).toEqual({
+      content: "Use the remembered UI constraints.",
+      role: "user",
+    });
+    expect(result.contextSummary).toMatchObject({
+      usedHistoryCount: 2,
+      usedContextItems: expect.arrayContaining([
+        expect.objectContaining({ sourceType: "session", title: "Session note" }),
+      ]),
+    });
+    expect(JSON.stringify({ messages, result })).not.toMatch(/sk-old-secret|token=|D:\\private|apiKey|Authorization/i);
+  });
+
+  it("keeps the current user message when context budget trims old session history", async () => {
+    const userDataDir = await fs.mkdtemp(path.join(os.tmpdir(), "main-provider-context-budget-"));
+    const persistedPath = path.join(userDataDir, "sessions", "agent-chat-session.json");
+    await fs.mkdir(path.dirname(persistedPath), { recursive: true });
+    await fs.writeFile(
+      persistedPath,
+      JSON.stringify({
+        chatMessages: [
+          { role: "user", text: "Old long history A".repeat(20) },
+          { role: "assistant", text: "Old long history B".repeat(20) },
+          { role: "user", text: "Recent memory" },
+          { role: "assistant", text: "Recent answer" },
+        ],
+      }),
+    );
+    const llmClient = vi.fn(async () => ({
+      data: {
+        metadata: { model: "gpt-4.1-mini", provider: "openai", toolCalls: 0 },
+        role: "assistant",
+        text: "Budgeted answer.",
+      },
+      ok: true,
+    }));
+    const provider = createMainDataProvider({
+      agentChatContextLimits: {
+        maxChars: 240,
+        maxItems: 1,
+        maxMessages: 4,
+      },
+      llmClient,
+      userDataDir,
+    });
+
+    const result = await provider.sendAgentChatMessage({
+      userText: "CURRENT MESSAGE MUST STAY",
+    });
+
+    const messages = llmClient.mock.calls[0][0].messages;
+    expect(messages.at(-1)).toEqual({
+      content: "CURRENT MESSAGE MUST STAY",
+      role: "user",
+    });
+    expect(result.contextSummary.trimmed.history).toBeGreaterThan(0);
+  });
+
   it("executes approved Level 1 tools and passes sanitized summaries into the LLM prompt", async () => {
     const llmClient = vi.fn(async (input) => ({
       data: {
@@ -654,6 +760,12 @@ describe("main process data provider", () => {
     expect(llmClient.mock.calls[0][0].contextPack.items).toEqual(expect.arrayContaining([
       expect.objectContaining({ sourceType: "tool", title: "Tool: Knowledge Search" }),
     ]));
+    expect(JSON.stringify(llmClient.mock.calls[0][0].messages)).toContain("Tool Result Summaries");
+    expect(result.contextSummary).toMatchObject({
+      usedToolResults: [
+        expect.objectContaining({ sourceType: "tool", toolId: "kb.searchLocal" }),
+      ],
+    });
     expect(JSON.stringify(result)).not.toMatch(/sk-tool-hidden|apiKey|token=|secret=|Authorization/i);
   });
 
@@ -684,6 +796,7 @@ describe("main process data provider", () => {
   });
 
   it("keeps tool summaries when the second LLM summary fails", async () => {
+    const userDataDir = await fs.mkdtemp(path.join(os.tmpdir(), "main-provider-tool-llm-error-user-data-"));
     const llmClient = vi.fn(async () => ({
       error: {
         code: "LLM_REQUEST_FAILED",
@@ -692,7 +805,7 @@ describe("main process data provider", () => {
       },
       ok: false,
     }));
-    const provider = createMainDataProvider({ llmClient });
+    const provider = createMainDataProvider({ llmClient, userDataDir });
 
     const result = await provider.sendAgentChatMessage({
       sessionId: "session-1",
@@ -707,12 +820,33 @@ describe("main process data provider", () => {
         role: "assistant",
         status: "error",
       },
+      contextSummary: {
+        usedToolResults: [
+          expect.objectContaining({ sourceType: "tool", toolId: "kb.searchLocal" }),
+        ],
+      },
       status: "error",
       toolResultsSummary: [
         expect.objectContaining({ status: "completed", toolId: "kb.searchLocal" }),
       ],
     });
+    expect(JSON.stringify(llmClient.mock.calls[0][0].messages)).toContain("Tool Result Summaries");
     expect(JSON.stringify(result)).not.toMatch(/sk-error-secret|token=/);
+
+    const persistedPath = path.join(userDataDir, "sessions", "agent-chat-session.json");
+    const persisted = await fs.readFile(persistedPath, "utf8");
+    const parsed = JSON.parse(persisted);
+    expect(parsed).toMatchObject({
+      contextSummary: {
+        usedToolResults: [
+          expect.objectContaining({ sourceType: "tool", toolId: "kb.searchLocal" }),
+        ],
+      },
+      toolResultsSummary: [
+        expect.objectContaining({ toolId: "kb.searchLocal" }),
+      ],
+    });
+    expect(persisted).not.toMatch(/sk-error-secret|token=|apiKey|Authorization|requestHeaders/i);
   });
 
   it("persists tool-augmented turns to userData without secrets or raw oversized results", async () => {
@@ -798,6 +932,326 @@ describe("main process data provider", () => {
         ]),
       },
     });
+  });
+
+  it("reindexes the configured Knowledge Base into userData and searches indexed chunks", async () => {
+    const rootDir = await fs.mkdtemp(path.join(os.tmpdir(), "main-provider-kb-index-"));
+    const docsRootDir = path.join(rootDir, "docs");
+    const localSourcesConfigPath = path.join(rootDir, "config", "local-sources.json");
+    const userDataDir = path.join(rootDir, "user-data");
+    await fs.mkdir(docsRootDir, { recursive: true });
+    await fs.mkdir(path.dirname(localSourcesConfigPath), { recursive: true });
+    await fs.writeFile(path.join(docsRootDir, "guide.md"), "# Guide\n\nIndexed needle with apiKey=sk-main-kb-secret D:\\private\\vault\\guide.md\n");
+    await fs.writeFile(
+      localSourcesConfigPath,
+      JSON.stringify({
+        paths: {
+          knowledgeBasePath: docsRootDir,
+        },
+      }),
+    );
+    const embedTexts = vi.fn(async (texts) => ({
+      ok: true,
+      data: {
+        embeddings: texts.map((text) => (text.includes("needle") ? [1, 0] : [0, 1])),
+        metadata: { model: "fake-embedding", provider: "fake" },
+        providerStatus: "ready",
+      },
+    }));
+    const provider = createMainDataProvider({
+      embedTexts,
+      embeddingConfig: { model: "fake-embedding", provider: "fake" },
+      localSourcesConfigPath,
+      userDataDir,
+    });
+
+    const reindex = await provider.startKnowledgeIndex();
+
+    expect(reindex).toMatchObject({
+      embeddingSummary: {
+        embedded: expect.any(Number),
+        failed: 0,
+        model: "fake-embedding",
+        provider: "fake",
+        providerStatus: "ready",
+      },
+      source: "knowledge-index",
+      status: "ready",
+      summary: {
+        docs: 1,
+        indexed: 1,
+        scanned: 1,
+        embedding: {
+          embedded: expect.any(Number),
+          failed: 0,
+          providerStatus: "ready",
+        },
+      },
+    });
+    expect(embedTexts).toHaveBeenCalled();
+    expect(JSON.stringify(reindex)).not.toContain(docsRootDir);
+    expect(JSON.stringify(reindex)).not.toContain(userDataDir);
+
+    await expect(provider.getKnowledgeBase()).resolves.toMatchObject({
+      indexStats: {
+        docs: 1,
+        embedding: {
+          embedded: expect.any(Number),
+          providerStatus: "ready",
+        },
+        source: "knowledge-index",
+        status: "ready",
+      },
+      knowledgeDocuments: [
+        expect.objectContaining({
+          relativePath: "guide.md",
+          source: "knowledge-index",
+        }),
+      ],
+    });
+    await expect(provider.searchKnowledgeLocal("needle")).resolves.toMatchObject({
+      matchMode: "hybrid",
+      results: [
+        expect.objectContaining({
+          chunkId: expect.any(String),
+          matchType: "hybrid",
+          preview: expect.stringContaining("needle"),
+          relativePath: "guide.md",
+          vectorScore: expect.any(Number),
+          source: "knowledge-index",
+        }),
+      ],
+      semanticStatus: "ready",
+      source: "knowledge-index",
+      status: "ready",
+    });
+
+    const indexJson = await fs.readFile(path.join(userDataDir, "knowledge", "knowledge-index.json"), "utf8");
+    expect(indexJson).not.toMatch(/sk-main-kb-secret|apiKey=|D:\\private/);
+    await expect(fs.access(path.join(docsRootDir, "knowledge", "knowledge-index.json"))).rejects.toThrow();
+  });
+
+  it("routes local bge-m3 embeddings through main/provider options for semantic Knowledge search", async () => {
+    const rootDir = await fs.mkdtemp(path.join(os.tmpdir(), "main-provider-local-bge-"));
+    const docsRootDir = path.join(rootDir, "docs");
+    const localSourcesConfigPath = path.join(rootDir, "config", "local-sources.json");
+    const modelPath = path.join(rootDir, "models", "bge-m3");
+    const userDataDir = path.join(rootDir, "user-data");
+    await fs.mkdir(docsRootDir, { recursive: true });
+    await fs.mkdir(path.dirname(localSourcesConfigPath), { recursive: true });
+    await fs.mkdir(modelPath, { recursive: true });
+    await fs.writeFile(path.join(modelPath, "config.json"), "{}");
+    await fs.writeFile(path.join(docsRootDir, "space.md"), "# Space\n\nApollo launch guidance.\n");
+    await fs.writeFile(path.join(docsRootDir, "garden.md"), "# Garden\n\nTomato planting guidance.\n");
+    await fs.writeFile(
+      localSourcesConfigPath,
+      JSON.stringify({
+        paths: {
+          knowledgeBasePath: docsRootDir,
+        },
+      }),
+    );
+    const embeddingRuntimeClient = vi.fn(async (request) => ({
+      dimension: 2,
+      elapsed: 3,
+      embeddings: request.texts.map((text) => (text.includes("Space") || text.includes("orbital") ? [1, 0] : [0, 1])),
+      model: "bge-m3",
+      ok: true,
+    }));
+    const provider = createMainDataProvider({
+      embeddingConfig: { modelPath, provider: "local-bge-m3" },
+      embeddingRuntimeClient,
+      localSourcesConfigPath,
+      userDataDir,
+    });
+
+    const reindex = await provider.startKnowledgeIndex();
+    const search = await provider.searchKnowledgeLocal("orbital");
+
+    expect(reindex).toMatchObject({
+      embeddingSummary: {
+        embedded: 2,
+        failed: 0,
+        model: "bge-m3",
+        provider: "local-bge-m3",
+        providerStatus: "ready",
+      },
+    });
+    expect(search).toMatchObject({
+      matchMode: "semantic",
+      results: [
+        expect.objectContaining({
+          matchType: "semantic",
+          relativePath: "space.md",
+        }),
+      ],
+      semanticStatus: "ready",
+    });
+    expect(embeddingRuntimeClient).toHaveBeenCalled();
+    expect(JSON.stringify({ reindex, search })).not.toContain(modelPath);
+  });
+
+  it("attaches indexed Knowledge contexts to Agent Chat userData and exposes sanitized session state", async () => {
+    const rootDir = await fs.mkdtemp(path.join(os.tmpdir(), "main-provider-kb-attach-"));
+    const docsRootDir = path.join(rootDir, "docs");
+    const localSourcesConfigPath = path.join(rootDir, "config", "local-sources.json");
+    const userDataDir = path.join(rootDir, "user-data");
+    await fs.mkdir(docsRootDir, { recursive: true });
+    await fs.mkdir(path.dirname(localSourcesConfigPath), { recursive: true });
+    await fs.writeFile(path.join(docsRootDir, "attach.md"), "# Attach\n\nAttachable context apiKey=sk-kb-attach-secret D:\\private\\vault\\attach.md\n");
+    await fs.writeFile(
+      localSourcesConfigPath,
+      JSON.stringify({
+        paths: {
+          knowledgeBasePath: docsRootDir,
+        },
+      }),
+    );
+    const llmClient = vi.fn(async () => ({
+      data: {
+        metadata: { model: "gpt-4.1-mini", provider: "openai", toolCalls: 0 },
+        role: "assistant",
+        text: "Attached context answer.",
+      },
+      ok: true,
+    }));
+    const provider = createMainDataProvider({
+      llmClient,
+      localSourcesConfigPath,
+      userDataDir,
+    });
+    await provider.startKnowledgeIndex();
+    const [document] = await provider.listKnowledgeDocuments();
+
+    const attach = await provider.attachKnowledgeContextToAgentChat({
+      documentId: document.id,
+      preview: "renderer supplied secret token=sk-renderer-secret",
+      relativePath: "D:\\private\\renderer\\bad.md",
+      sessionId: "local-session",
+    });
+
+    expect(attach).toMatchObject({
+      attachedKnowledgeContexts: [
+        expect.objectContaining({
+          documentId: document.id,
+          relativePath: "attach.md",
+          sourceType: "knowledge",
+          title: "attach.md",
+        }),
+      ],
+      sessionId: "local-session",
+      status: "saved",
+    });
+    expect(JSON.stringify(attach)).not.toMatch(/sk-kb-attach-secret|sk-renderer-secret|apiKey|token=|D:\\private/);
+
+    await expect(provider.listAgentChatKnowledgeContexts({ sessionId: "local-session" })).resolves.toMatchObject({
+      attachedKnowledgeContexts: [expect.objectContaining({ documentId: document.id })],
+      total: 1,
+    });
+    await expect(provider.getAgentChat()).resolves.toMatchObject({
+      attachedKnowledgeContexts: [expect.objectContaining({ documentId: document.id, title: "attach.md" })],
+    });
+    const chatResult = await provider.sendAgentChatMessage({
+      sessionId: "local-session",
+      toolPolicy: { autoAllowLevel1ReadOnly: true },
+      userText: "Use the attached knowledge context.",
+    });
+    expect(chatResult).toMatchObject({
+      status: "ready",
+    });
+    expect(chatResult.contextSummary.usedContextItems[0]).toMatchObject({
+      sourceType: "knowledge",
+      status: "attached",
+      title: "attach.md",
+    });
+    expect(JSON.stringify(llmClient.mock.calls[0][0].messages)).toContain("attach.md");
+    const sessionJson = await fs.readFile(path.join(userDataDir, "sessions", "agent-chat-session.json"), "utf8");
+    expect(sessionJson).toContain('"status": "attached"');
+    expect(sessionJson).toContain("attach.md");
+    expect(sessionJson).not.toMatch(/sk-kb-attach-secret|sk-renderer-secret|apiKey|token=|D:\\private/);
+
+    const storeJson = await fs.readFile(path.join(userDataDir, "sessions", "agent-chat-knowledge-contexts.json"), "utf8");
+    expect(storeJson).not.toMatch(/sk-kb-attach-secret|sk-renderer-secret|apiKey|token=|D:\\private/);
+    await expect(fs.access(path.join(docsRootDir, "sessions", "agent-chat-knowledge-contexts.json"))).rejects.toThrow();
+
+    await provider.removeKnowledgeContextFromAgentChat({
+      contextId: attach.attachedKnowledgeContexts[0].contextId,
+      sessionId: "local-session",
+    });
+    await expect(provider.listAgentChatKnowledgeContexts({ sessionId: "local-session" })).resolves.toMatchObject({
+      attachedKnowledgeContexts: [],
+      total: 0,
+    });
+    await provider.attachKnowledgeContextToAgentChat({
+      documentId: document.id,
+      sessionId: "local-session",
+    });
+    await provider.clearAgentChatKnowledgeContexts({ sessionId: "local-session" });
+    await expect(provider.listAgentChatKnowledgeContexts({ sessionId: "local-session" })).resolves.toMatchObject({
+      attachedKnowledgeContexts: [],
+      total: 0,
+    });
+  });
+
+  it("feeds indexed kb.searchLocal tool summaries into Agent Chat Context Builder", async () => {
+    const rootDir = await fs.mkdtemp(path.join(os.tmpdir(), "main-provider-kb-agent-"));
+    const docsRootDir = path.join(rootDir, "docs");
+    const localSourcesConfigPath = path.join(rootDir, "config", "local-sources.json");
+    const userDataDir = path.join(rootDir, "user-data");
+    await fs.mkdir(docsRootDir, { recursive: true });
+    await fs.mkdir(path.dirname(localSourcesConfigPath), { recursive: true });
+    await fs.writeFile(path.join(docsRootDir, "rag.md"), "# RAG\n\nContext Builder should cite indexed needle chunks.\n");
+    await fs.writeFile(
+      localSourcesConfigPath,
+      JSON.stringify({
+        paths: {
+          knowledgeBasePath: docsRootDir,
+        },
+      }),
+    );
+    const llmClient = vi.fn(async () => ({
+      data: {
+        metadata: { model: "gpt-4.1-mini", provider: "openai", toolCalls: 1 },
+        role: "assistant",
+        text: "Indexed answer.",
+      },
+      ok: true,
+    }));
+    const provider = createMainDataProvider({
+      agentChatContextLimits: {
+        maxChars: 4000,
+        maxItems: 6,
+        maxMessages: 2,
+      },
+      llmClient,
+      localSourcesConfigPath,
+      userDataDir,
+    });
+    await provider.startKnowledgeIndex();
+
+    const result = await provider.sendAgentChatMessage({
+      toolPolicy: { autoAllowLevel1ReadOnly: true },
+      userText: "search docs for indexed needle",
+    });
+
+    expect(result).toMatchObject({
+      contextSummary: {
+        usedToolResults: [
+          expect.objectContaining({ sourceType: "tool", toolId: "kb.searchLocal" }),
+        ],
+      },
+      status: "ready",
+      toolResultsSummary: [
+        expect.objectContaining({
+          summary: expect.stringContaining("Knowledge Search"),
+          toolId: "kb.searchLocal",
+        }),
+      ],
+    });
+    const llmInput = llmClient.mock.calls[0][0];
+    expect(JSON.stringify(llmInput.messages)).toContain("Tool Result Summaries");
+    expect(JSON.stringify(llmInput.messages)).toContain("rag.md");
+    expect(JSON.stringify({ llmInput, result })).not.toMatch(/D:\\|sk-|apiKey|Authorization/);
   });
 
   it("uses explicit mock status when phase-2 local paths are not configured", async () => {

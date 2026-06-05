@@ -1,12 +1,17 @@
 import fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import {
   getKnowledgeBaseData,
   getKnowledgeDocumentPreview,
+  reindexKnowledgeBase,
   searchKnowledgeLocal,
 } from "./knowledgeBaseAdapter";
+import {
+  getKnowledgeVectorPath,
+  readKnowledgeVectors,
+} from "./knowledgeVectorStore";
 
 async function createKnowledgeFixture() {
   const rootDir = await fs.mkdtemp(path.join(os.tmpdir(), "knowledge-base-"));
@@ -146,6 +151,104 @@ describe("knowledge base adapter", () => {
     expect(JSON.stringify(result)).not.toContain(rootDir);
   });
 
+  it("reindexes local docs into an app-owned userData knowledge index", async () => {
+    const rootDir = await createKnowledgeFixture();
+    const userDataDir = await fs.mkdtemp(path.join(os.tmpdir(), "knowledge-user-data-"));
+
+    const result = await reindexKnowledgeBase({
+      now: "2026-06-05T00:00:00.000Z",
+      rootDir,
+      userDataDir,
+    });
+
+    expect(result).toMatchObject({
+      indexPath: path.join(userDataDir, "knowledge", "knowledge-index.json"),
+      source: "knowledge-index",
+      status: "ready",
+      summary: {
+        chunks: expect.any(Number),
+        docs: 8,
+        failed: 0,
+        indexed: 7,
+        scanned: 8,
+        skipped: 0,
+      },
+    });
+    expect(JSON.stringify(result)).not.toContain(rootDir);
+
+    const indexJson = await fs.readFile(path.join(userDataDir, "knowledge", "knowledge-index.json"), "utf8");
+    expect(indexJson).toContain("requirements/desktop.md");
+    expect(indexJson).not.toContain(rootDir);
+    await expect(fs.access(path.join(rootDir, "knowledge", "knowledge-index.json"))).rejects.toThrow();
+  });
+
+  it("uses the persisted index for Knowledge Base data and chunk-level search", async () => {
+    const rootDir = await createKnowledgeFixture();
+    const userDataDir = await fs.mkdtemp(path.join(os.tmpdir(), "knowledge-indexed-search-"));
+    await fs.writeFile(
+      path.join(rootDir, "secrets.md"),
+      "# Secret\n\nneedle apiKey=sk-adapter-secret Authorization: Bearer hidden D:\\private\\vault\\secret.md\n",
+    );
+    await reindexKnowledgeBase({ rootDir, userDataDir });
+
+    const data = await getKnowledgeBaseData({ rootDir, userDataDir });
+    expect(data).toMatchObject({
+      indexStats: {
+        docs: 9,
+        source: "knowledge-index",
+        status: "ready",
+      },
+      knowledgeDocuments: expect.arrayContaining([
+        expect.objectContaining({ relativePath: "secrets.md", source: "knowledge-index" }),
+      ]),
+    });
+
+    const result = await searchKnowledgeLocal({
+      maxResultChars: 140,
+      maxResultItems: 2,
+      query: "needle",
+      rootDir,
+      userDataDir,
+    });
+
+    expect(result).toMatchObject({
+      source: "knowledge-index",
+      status: "ready",
+      total: expect.any(Number),
+      results: expect.arrayContaining([
+        expect.objectContaining({
+          chunkId: expect.any(String),
+          documentId: expect.any(String),
+          preview: expect.stringContaining("needle"),
+          relativePath: expect.any(String),
+          source: "knowledge-index",
+        }),
+      ]),
+    });
+    expect(result.results.length).toBeLessThanOrEqual(2);
+    expect(JSON.stringify(result)).not.toMatch(/sk-adapter-secret|apiKey=|Bearer hidden|D:\\private|knowledge-indexed-search/);
+    expect(result.results.every((item) => item.preview.length <= 140)).toBe(true);
+  });
+
+  it("falls back to read-only scanning with an unindexed status when no index exists", async () => {
+    const rootDir = await createKnowledgeFixture();
+    const userDataDir = await fs.mkdtemp(path.join(os.tmpdir(), "knowledge-no-index-"));
+
+    const data = await getKnowledgeBaseData({ rootDir, userDataDir });
+    const result = await searchKnowledgeLocal({ query: "needle", rootDir, userDataDir });
+
+    expect(data.indexStats).toMatchObject({
+      source: "scan-fallback",
+      status: "unindexed",
+    });
+    expect(result).toMatchObject({
+      results: [expect.objectContaining({ relativePath: "notes.txt", source: "scan-fallback" })],
+      source: "scan-fallback",
+      status: "unindexed",
+    });
+    expect(JSON.stringify(result)).not.toContain(rootDir);
+  });
+
   it("returns a read-only preview for a scanned document id", async () => {
     const rootDir = await createKnowledgeFixture();
     const data = await getKnowledgeBaseData({ rootDir });
@@ -168,5 +271,357 @@ describe("knowledge base adapter", () => {
       title: "README.md",
     });
     expect(JSON.stringify(preview)).not.toContain(rootDir);
+  });
+
+  it("reindexes embeddings into an app-owned vector cache when the provider is ready", async () => {
+    const rootDir = await createKnowledgeFixture();
+    const userDataDir = await fs.mkdtemp(path.join(os.tmpdir(), "knowledge-embedding-user-data-"));
+
+    const result = await reindexKnowledgeBase({
+      embeddingConfig: { model: "fake-embedding", provider: "fake" },
+      now: "2026-06-05T00:00:00.000Z",
+      rootDir,
+      userDataDir,
+    });
+
+    expect(result).toMatchObject({
+      embeddingSummary: {
+        embedded: expect.any(Number),
+        failed: 0,
+        model: "fake-embedding",
+        provider: "fake",
+        providerStatus: "ready",
+      },
+      summary: {
+        chunks: expect.any(Number),
+        embedding: {
+          providerStatus: "ready",
+        },
+      },
+    });
+    expect(result.embeddingSummary.embedded).toBeGreaterThan(0);
+
+    const vectorPath = getKnowledgeVectorPath({ userDataDir });
+    const vectorsJson = await fs.readFile(vectorPath, "utf8");
+    expect(vectorsJson).toContain("fake-embedding");
+    expect(vectorsJson).not.toMatch(/apiKey|token|secret|Authorization|Bearer|sk-|D:\\private/);
+    expect(JSON.stringify(result)).not.toContain(vectorPath);
+  });
+
+  it("keeps reindex successful and marks embeddings unavailable when the provider is unconfigured", async () => {
+    const rootDir = await createKnowledgeFixture();
+    const userDataDir = await fs.mkdtemp(path.join(os.tmpdir(), "knowledge-embedding-unavailable-"));
+
+    const result = await reindexKnowledgeBase({
+      embeddingConfig: { provider: "", model: "", apiKey: "" },
+      rootDir,
+      userDataDir,
+    });
+
+    expect(result).toMatchObject({
+      source: "knowledge-index",
+      status: "ready",
+      summary: {
+        docs: 8,
+        embedding: {
+          embedded: 0,
+          failed: 0,
+          providerStatus: "unconfigured",
+        },
+      },
+    });
+    expect(result.summary.embedding.skipped).toBe(result.summary.chunks);
+  });
+
+  it("reuses unchanged vectors and re-embeds changed chunks by textHash", async () => {
+    const rootDir = await fs.mkdtemp(path.join(os.tmpdir(), "knowledge-embedding-delta-"));
+    const userDataDir = await fs.mkdtemp(path.join(os.tmpdir(), "knowledge-embedding-delta-cache-"));
+    await fs.writeFile(path.join(rootDir, "note.md"), "# Note\n\nFirst body.\n");
+    const embedTexts = vi.fn(async (texts) => ({
+      ok: true,
+      data: {
+        embeddings: texts.map(() => [1, 0]),
+        metadata: { model: "fake-embedding", provider: "fake" },
+        providerStatus: "ready",
+      },
+    }));
+
+    await reindexKnowledgeBase({
+      embedTexts,
+      embeddingConfig: { model: "fake-embedding", provider: "fake" },
+      now: "2026-06-05T00:00:00.000Z",
+      rootDir,
+      userDataDir,
+    });
+    expect(embedTexts).toHaveBeenCalledTimes(1);
+
+    embedTexts.mockClear();
+    await reindexKnowledgeBase({
+      embedTexts,
+      embeddingConfig: { model: "fake-embedding", provider: "fake" },
+      now: "2026-06-05T00:00:00.000Z",
+      rootDir,
+      userDataDir,
+    });
+    expect(embedTexts).not.toHaveBeenCalled();
+
+    await fs.writeFile(path.join(rootDir, "note.md"), "# Note\n\nChanged body.\n");
+    await reindexKnowledgeBase({
+      embedTexts,
+      embeddingConfig: { model: "fake-embedding", provider: "fake" },
+      now: "2026-06-05T00:00:00.000Z",
+      rootDir,
+      userDataDir,
+    });
+    expect(embedTexts).toHaveBeenCalledTimes(1);
+  });
+
+  it("does not block reindex when one chunk embedding fails", async () => {
+    const rootDir = await fs.mkdtemp(path.join(os.tmpdir(), "knowledge-embedding-partial-"));
+    const userDataDir = await fs.mkdtemp(path.join(os.tmpdir(), "knowledge-embedding-partial-cache-"));
+    await fs.writeFile(path.join(rootDir, "one.md"), "# One\n\nFirst chunk.\n");
+    await fs.writeFile(path.join(rootDir, "two.md"), "# Two\n\nSecond chunk.\n");
+    const embedTexts = vi.fn(async (texts) => {
+      if (texts[0].includes("Two")) {
+        return { ok: false, error: { code: "EMBEDDING_REQUEST_FAILED", message: "failed", retryable: true } };
+      }
+      return {
+        ok: true,
+        data: {
+          embeddings: [[1, 0]],
+          metadata: { model: "fake-embedding", provider: "fake" },
+          providerStatus: "ready",
+        },
+      };
+    });
+
+    const result = await reindexKnowledgeBase({
+      embedTexts,
+      embeddingConfig: { model: "fake-embedding", provider: "fake" },
+      rootDir,
+      userDataDir,
+    });
+    const vectors = await readKnowledgeVectors({ userDataDir });
+
+    expect(result).toMatchObject({
+      status: "ready",
+      summary: {
+        embedding: {
+          embedded: 1,
+          failed: 1,
+          providerStatus: "ready",
+        },
+      },
+    });
+    expect(vectors.vectors.length).toBe(1);
+  });
+
+  it("uses semantic and hybrid-ready vector results for indexed local search", async () => {
+    const rootDir = await fs.mkdtemp(path.join(os.tmpdir(), "knowledge-hybrid-search-"));
+    const userDataDir = await fs.mkdtemp(path.join(os.tmpdir(), "knowledge-hybrid-search-cache-"));
+    await fs.writeFile(path.join(rootDir, "space.md"), "# Space\n\nApollo launch guidance.\n");
+    await fs.writeFile(path.join(rootDir, "garden.md"), "# Garden\n\nTomato planting guidance.\n");
+    const embedTexts = vi.fn(async (texts) => ({
+      ok: true,
+      data: {
+        embeddings: texts.map((text) => (text.includes("Space") || text.includes("orbital") ? [1, 0] : [0, 1])),
+        metadata: { model: "fake-embedding", provider: "fake" },
+        providerStatus: "ready",
+      },
+    }));
+
+    await reindexKnowledgeBase({
+      embedTexts,
+      embeddingConfig: { model: "fake-embedding", provider: "fake" },
+      rootDir,
+      userDataDir,
+    });
+    const result = await searchKnowledgeLocal({
+      embedTexts,
+      embeddingConfig: { model: "fake-embedding", provider: "fake" },
+      maxResultItems: 1,
+      query: "orbital",
+      rootDir,
+      userDataDir,
+    });
+
+    expect(result).toMatchObject({
+      matchMode: "semantic",
+      results: [
+        expect.objectContaining({
+          matchType: "semantic",
+          relativePath: "space.md",
+          vectorScore: expect.any(Number),
+        }),
+      ],
+      semanticStatus: "ready",
+      source: "knowledge-index",
+    });
+    expect(JSON.stringify(result)).not.toContain(rootDir);
+  });
+
+  it("keeps indexed search keyword-only when embeddings are unavailable", async () => {
+    const rootDir = await createKnowledgeFixture();
+    const userDataDir = await fs.mkdtemp(path.join(os.tmpdir(), "knowledge-keyword-only-cache-"));
+    await reindexKnowledgeBase({ rootDir, userDataDir });
+
+    const result = await searchKnowledgeLocal({
+      embeddingConfig: { provider: "", model: "", apiKey: "" },
+      query: "needle",
+      rootDir,
+      userDataDir,
+    });
+
+    expect(result).toMatchObject({
+      matchMode: "keyword",
+      results: [
+        expect.objectContaining({
+          matchType: "keyword",
+          relativePath: "notes.txt",
+        }),
+      ],
+      semanticStatus: "unavailable",
+      source: "knowledge-index",
+    });
+  });
+
+  it("uses local bge-m3 runtime embeddings for indexed semantic search", async () => {
+    const rootDir = await fs.mkdtemp(path.join(os.tmpdir(), "knowledge-local-bge-search-"));
+    const userDataDir = await fs.mkdtemp(path.join(os.tmpdir(), "knowledge-local-bge-cache-"));
+    const modelPath = await fs.mkdtemp(path.join(os.tmpdir(), "knowledge-local-bge-model-"));
+    await fs.writeFile(path.join(modelPath, "config.json"), "{}");
+    await fs.writeFile(path.join(rootDir, "space.md"), "# Space\n\nApollo launch guidance.\n");
+    await fs.writeFile(path.join(rootDir, "garden.md"), "# Garden\n\nTomato planting guidance.\n");
+    const runtimeClient = vi.fn(async (request) => ({
+      dimension: 2,
+      elapsed: 7,
+      embeddings: request.texts.map((text) => (text.includes("Space") || text.includes("orbital") ? [1, 0] : [0, 1])),
+      model: "bge-m3",
+      ok: true,
+    }));
+
+    const reindex = await reindexKnowledgeBase({
+      embeddingConfig: { modelPath, provider: "local-bge-m3" },
+      rootDir,
+      runtimeClient,
+      userDataDir,
+    });
+    const result = await searchKnowledgeLocal({
+      embeddingConfig: { modelPath, provider: "local-bge-m3" },
+      maxResultItems: 1,
+      query: "orbital",
+      rootDir,
+      runtimeClient,
+      userDataDir,
+    });
+    const vectors = await readKnowledgeVectors({ userDataDir });
+
+    expect(reindex).toMatchObject({
+      embeddingSummary: {
+        embedded: 2,
+        failed: 0,
+        model: "bge-m3",
+        provider: "local-bge-m3",
+        providerStatus: "ready",
+      },
+    });
+    expect(vectors.metadata).toMatchObject({
+      dimension: 2,
+      model: "bge-m3",
+      provider: "local-bge-m3",
+    });
+    expect(result).toMatchObject({
+      matchMode: "semantic",
+      results: [
+        expect.objectContaining({
+          matchType: "semantic",
+          relativePath: "space.md",
+        }),
+      ],
+      semanticStatus: "ready",
+    });
+    expect(JSON.stringify({ reindex, result, vectors })).not.toContain(modelPath);
+  });
+
+  it("batches local bge-m3 chunk embeddings so the model loads once per reindex batch", async () => {
+    const rootDir = await fs.mkdtemp(path.join(os.tmpdir(), "knowledge-local-bge-batch-"));
+    const userDataDir = await fs.mkdtemp(path.join(os.tmpdir(), "knowledge-local-bge-batch-cache-"));
+    const modelPath = await fs.mkdtemp(path.join(os.tmpdir(), "knowledge-local-bge-batch-model-"));
+    await fs.writeFile(path.join(modelPath, "config.json"), "{}");
+    await fs.writeFile(path.join(rootDir, "one.md"), "# One\n\nAlpha content.\n");
+    await fs.writeFile(path.join(rootDir, "two.md"), "# Two\n\nBeta content.\n");
+    await fs.writeFile(path.join(rootDir, "three.md"), "# Three\n\nGamma content.\n");
+    const runtimeClient = vi.fn(async (request) => ({
+      dimension: 2,
+      elapsed: 9,
+      embeddings: request.texts.map((_, index) => [index + 1, 0]),
+      model: "bge-m3",
+      ok: true,
+    }));
+
+    const reindex = await reindexKnowledgeBase({
+      embeddingConfig: { modelPath, provider: "local-bge-m3" },
+      rootDir,
+      runtimeClient,
+      userDataDir,
+    });
+
+    expect(reindex).toMatchObject({
+      embeddingSummary: {
+        embedded: 3,
+        failed: 0,
+        providerStatus: "ready",
+      },
+    });
+    expect(runtimeClient).toHaveBeenCalledTimes(1);
+    expect(runtimeClient.mock.calls[0][0].texts).toHaveLength(3);
+  });
+
+  it("falls back to keyword-only search when local bge-m3 runtime is unavailable", async () => {
+    const rootDir = await fs.mkdtemp(path.join(os.tmpdir(), "knowledge-local-bge-unavailable-"));
+    const userDataDir = await fs.mkdtemp(path.join(os.tmpdir(), "knowledge-local-bge-unavailable-cache-"));
+    const modelPath = await fs.mkdtemp(path.join(os.tmpdir(), "knowledge-local-bge-unavailable-model-"));
+    await fs.writeFile(path.join(modelPath, "config.json"), "{}");
+    await fs.writeFile(path.join(rootDir, "notes.md"), "# Notes\n\nNeedle fallback text.\n");
+    const runtimeClient = vi.fn(async () => ({
+      error: {
+        code: "missing_dependency",
+        message: "sentence-transformers missing at D:\\private\\python token=sk-runtime",
+      },
+      ok: false,
+    }));
+
+    const reindex = await reindexKnowledgeBase({
+      embeddingConfig: { modelPath, provider: "local-bge-m3" },
+      rootDir,
+      runtimeClient,
+      userDataDir,
+    });
+    const result = await searchKnowledgeLocal({
+      embeddingConfig: { modelPath, provider: "local-bge-m3" },
+      query: "needle",
+      rootDir,
+      runtimeClient,
+      userDataDir,
+    });
+
+    expect(reindex).toMatchObject({
+      source: "knowledge-index",
+      status: "ready",
+      summary: {
+        embedding: {
+          embedded: 0,
+          failed: 1,
+          providerStatus: "missing_dependency",
+        },
+      },
+    });
+    expect(result).toMatchObject({
+      matchMode: "keyword",
+      results: [expect.objectContaining({ matchType: "keyword", relativePath: "notes.md" })],
+      semanticStatus: "unavailable",
+      source: "knowledge-index",
+    });
+    expect(JSON.stringify({ reindex, result })).not.toMatch(/D:\\private|sk-runtime|token=|sentence-transformers missing at D:\\/);
   });
 });

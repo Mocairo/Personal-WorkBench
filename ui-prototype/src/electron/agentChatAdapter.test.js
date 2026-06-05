@@ -127,6 +127,25 @@ describe("agent chat adapter", () => {
       userDataSessionPath,
       JSON.stringify({
         chatMessages: [{ role: "assistant", text: "Persisted userData session token=sk-hidden" }],
+        contextSummary: {
+          trimmed: { contextItems: 1, history: 2, toolResults: 0 },
+          usedContextItems: [
+            {
+              sourceType: "knowledge",
+              status: "used",
+              title: "D:\\private\\kb\\doc.md apiKey=sk-context-hidden",
+            },
+          ],
+          usedHistoryCount: 2,
+          usedToolResults: [
+            {
+              label: "Knowledge Search token=sk-tool-hidden",
+              sourceType: "tool",
+              status: "completed",
+              toolId: "kb.searchLocal",
+            },
+          ],
+        },
         session: {
           id: "persisted-session",
           title: "Persisted chat",
@@ -141,6 +160,23 @@ describe("agent chat adapter", () => {
 
     expect(data).toMatchObject({
       chatMessages: [{ role: "assistant", text: "Persisted userData session token=[redacted]" }],
+      contextSummary: {
+        trimmed: { contextItems: 1, history: 2, toolResults: 0 },
+        usedContextItems: [
+          expect.objectContaining({
+            sourceType: "knowledge",
+            title: "[redacted-path] [redacted]",
+          }),
+        ],
+        usedHistoryCount: 2,
+        usedToolResults: [
+          expect.objectContaining({
+            label: "Knowledge Search [redacted]",
+            sourceType: "tool",
+            toolId: "kb.searchLocal",
+          }),
+        ],
+      },
       providerStatus: {
         configured: true,
         status: "ready",
@@ -151,6 +187,7 @@ describe("agent chat adapter", () => {
         title: "Persisted chat",
       },
     });
+    expect(JSON.stringify(data.contextSummary)).not.toMatch(/sk-context-hidden|sk-tool-hidden|apiKey|D:\\private/);
     expect(JSON.stringify(data)).not.toMatch(/sk-hidden/);
   });
 });

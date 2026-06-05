@@ -55,6 +55,30 @@ export const IPC_METHODS = [
     channel: "agentChat:message:stream:cancel",
   },
   {
+    namespace: "agentChat",
+    method: "attachKnowledgeContext",
+    providerMethod: "attachKnowledgeContextToAgentChat",
+    channel: "agentChat:knowledgeContext:attach",
+  },
+  {
+    namespace: "agentChat",
+    method: "listKnowledgeContexts",
+    providerMethod: "listAgentChatKnowledgeContexts",
+    channel: "agentChat:knowledgeContext:list",
+  },
+  {
+    namespace: "agentChat",
+    method: "removeKnowledgeContext",
+    providerMethod: "removeKnowledgeContextFromAgentChat",
+    channel: "agentChat:knowledgeContext:remove",
+  },
+  {
+    namespace: "agentChat",
+    method: "clearKnowledgeContexts",
+    providerMethod: "clearAgentChatKnowledgeContexts",
+    channel: "agentChat:knowledgeContext:clear",
+  },
+  {
     namespace: "knowledge",
     method: "getKnowledgeBase",
     providerMethod: "getKnowledgeBase",
@@ -161,8 +185,6 @@ export const IPC_METHODS = [
     method: "startIndex",
     providerMethod: "startKnowledgeIndex",
     channel: "kb:index:start",
-    permission: "denied",
-    message: "Starting index tasks is disabled in phase 1.",
   },
   {
     namespace: "codeRepo",

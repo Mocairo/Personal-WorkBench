@@ -21,6 +21,9 @@ const STREAM_SECRET_ASSIGNMENT_PATTERN = /\b(api[_-]?key|token|secret|password)\
 const STREAM_AUTHORIZATION_PATTERN = /\b(Authorization:\s*Bearer\s+)[^\s,;]+/gi;
 const STREAM_OPENAI_KEY_PATTERN = /\bsk-[A-Za-z0-9_-]+/g;
 const STREAM_WINDOWS_PATH_PATTERN = /\b[A-Za-z]:\\[^\s"']+/g;
+const PROMPT_SECRET_ASSIGNMENT_PATTERN = /\b(api[_-]?key|token|secret|password)\s*[:=]\s*[^\s,;]+/gi;
+const PROMPT_AUTHORIZATION_PATTERN = /\bAuthorization:\s*Bearer\s+[^\s,;]+/gi;
+const VALID_MESSAGE_ROLES = new Set(["assistant", "system", "user"]);
 
 function getProviderInputs(options = {}) {
   return Array.isArray(options.providers) && options.providers.length > 0
@@ -40,6 +43,18 @@ function redactStreamText(value) {
   return value
     .replace(STREAM_AUTHORIZATION_PATTERN, "$1[redacted]")
     .replace(STREAM_SECRET_ASSIGNMENT_PATTERN, (match) => `${match.split("=")[0]}=[redacted]`)
+    .replace(STREAM_OPENAI_KEY_PATTERN, "[redacted]")
+    .replace(STREAM_WINDOWS_PATH_PATTERN, "[redacted-path]");
+}
+
+function redactPromptText(value) {
+  if (typeof value !== "string") {
+    return "";
+  }
+
+  return value
+    .replace(PROMPT_AUTHORIZATION_PATTERN, "[redacted]")
+    .replace(PROMPT_SECRET_ASSIGNMENT_PATTERN, "[redacted]")
     .replace(STREAM_OPENAI_KEY_PATTERN, "[redacted]")
     .replace(STREAM_WINDOWS_PATH_PATTERN, "[redacted-path]");
 }
@@ -94,8 +109,8 @@ function buildContextSummary(contextPack = {}) {
 }
 
 function buildTextMessages(input = {}) {
-  const userText = redactSecretText(cleanString(input.userText ?? input.text ?? input.message));
-  const contextSummary = redactSecretText(buildContextSummary(input.contextPack));
+  const userText = redactPromptText(cleanString(input.userText ?? input.text ?? input.message));
+  const contextSummary = redactPromptText(buildContextSummary(input.contextPack));
 
   return [
     {
@@ -111,6 +126,28 @@ function buildTextMessages(input = {}) {
       role: "user",
     },
   ];
+}
+
+function normalizePrebuiltMessage(message = {}) {
+  const role = cleanString(message.role);
+  const content = redactPromptText(cleanString(message.content ?? message.text));
+
+  if (!VALID_MESSAGE_ROLES.has(role) || !content) {
+    return null;
+  }
+
+  return {
+    content,
+    role,
+  };
+}
+
+function resolveTextMessages(input = {}) {
+  const messages = Array.isArray(input.messages)
+    ? input.messages.map(normalizePrebuiltMessage).filter(Boolean).slice(0, 32)
+    : [];
+
+  return messages.length > 0 ? messages : buildTextMessages(input);
 }
 
 function extractResponseText(payload = {}) {
@@ -317,7 +354,7 @@ export async function sendLlmTextMessage(input = {}, options = {}) {
   try {
     const response = await transport(`${config.baseUrl}/chat/completions`, {
       body: JSON.stringify({
-        messages: buildTextMessages(input),
+        messages: resolveTextMessages(input),
         model: config.model,
         stream: false,
         tool_choice: "none",
@@ -407,7 +444,7 @@ export async function streamLlmTextMessage(input = {}, options = {}) {
   try {
     const response = await transport(`${config.baseUrl}/chat/completions`, {
       body: JSON.stringify({
-        messages: buildTextMessages(input),
+        messages: resolveTextMessages(input),
         model: config.model,
         stream: true,
         tool_choice: "none",

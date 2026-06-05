@@ -18,6 +18,18 @@ describe("electron IPC handlers", () => {
       previewAgentChatToolPlan: () => ({ items: [{ toolId: "kb.search" }], status: "ready" }),
       runAgentChatDryMessage: (input) => ({ dryRun: true, userText: input.userText }),
       cancelAgentChatStream: (input) => ({ requestId: input.requestId, status: "cancelled" }),
+      attachKnowledgeContextToAgentChat: (input) => ({
+        attachedKnowledgeContexts: [{ contextId: "doc-1:chunk-1", title: input.title }],
+        sessionId: input.sessionId,
+        status: "saved",
+      }),
+      clearAgentChatKnowledgeContexts: (input) => ({ attachedKnowledgeContexts: [], sessionId: input.sessionId, status: "cleared" }),
+      listAgentChatKnowledgeContexts: (input) => ({
+        attachedKnowledgeContexts: [{ contextId: "doc-1:chunk-1", title: "Docs" }],
+        sessionId: input.sessionId,
+        total: 1,
+      }),
+      removeKnowledgeContextFromAgentChat: (input) => ({ attachedKnowledgeContexts: [], sessionId: input.sessionId, status: "removed" }),
       sendAgentChatMessage: (input) => ({
         assistantMessage: { role: "assistant", text: `Reply: ${input.userText}` },
         toolCalls: [],
@@ -47,6 +59,7 @@ describe("electron IPC handlers", () => {
       listKnowledgeDocuments: () => [{ documentId: "readme" }],
       getKnowledgeIndexStatus: () => ({ docs: 1 }),
       searchKnowledgeLocal: (query) => ({ query, results: [] }),
+      startKnowledgeIndex: () => ({ source: "knowledge-index", status: "ready", summary: { docs: 1 } }),
       getAgentManagement: () => ({ page: "agents" }),
       listAgents: () => [{ name: "Repo Analyst" }],
       listAgentSessions: () => [],
@@ -92,6 +105,10 @@ describe("electron IPC handlers", () => {
       "agentChat:message:send",
       "agentChat:message:stream",
       "agentChat:message:stream:cancel",
+      "agentChat:knowledgeContext:attach",
+      "agentChat:knowledgeContext:list",
+      "agentChat:knowledgeContext:remove",
+      "agentChat:knowledgeContext:clear",
       "knowledge:getKnowledgeBase",
       "agentManagement:getAgentManagement",
       "repository:getCodeRepository",
@@ -201,6 +218,26 @@ describe("electron IPC handlers", () => {
       data: { requestId: "request-1", status: "cancelled" },
       ok: true,
     });
+    await expect(handlers.get("agentChat:knowledgeContext:attach")(null, {
+      documentId: "doc-1",
+      sessionId: "session-1",
+      title: "Docs",
+    })).resolves.toEqual({
+      data: {
+        attachedKnowledgeContexts: [{ contextId: "doc-1:chunk-1", title: "Docs" }],
+        sessionId: "session-1",
+        status: "saved",
+      },
+      ok: true,
+    });
+    await expect(handlers.get("agentChat:knowledgeContext:list")(null, { sessionId: "session-1" })).resolves.toEqual({
+      data: {
+        attachedKnowledgeContexts: [{ contextId: "doc-1:chunk-1", title: "Docs" }],
+        sessionId: "session-1",
+        total: 1,
+      },
+      ok: true,
+    });
     await expect(handlers.get("settings:selectLocalSourcePath")(null, "local-music")).resolves.toEqual({
       data: { sourceId: "local-music" },
       ok: true,
@@ -233,6 +270,10 @@ describe("electron IPC handlers", () => {
     await expect(handlers.get("llm:message:send")()).resolves.toMatchObject({
       error: { code: "NOT_IMPLEMENTED" },
       ok: false,
+    });
+    await expect(handlers.get("kb:index:start")()).resolves.toEqual({
+      data: { source: "knowledge-index", status: "ready", summary: { docs: 1 } },
+      ok: true,
     });
     await expect(handlers.get("llm:message:sendText")()).resolves.toEqual({
       data: { role: "assistant", text: "LLM reply" },

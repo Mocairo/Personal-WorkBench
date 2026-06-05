@@ -3,6 +3,7 @@ import * as mockProvider from "../services/mockProvider.js";
 import { redactSecretText } from "../shared/llmSecurityContracts.js";
 import { buildProviderStatus, buildSourceHealth } from "../shared/sourceStatus.js";
 import { getAgentChatData } from "./agentChatAdapter.js";
+import { buildAgentLlmContext } from "./agentContextBuilder.js";
 import {
   prepareMessageDraft,
   previewContextPack,
@@ -22,8 +23,16 @@ import { getHomeDashboardData } from "./homeDashboardAdapter.js";
 import {
   getKnowledgeBaseData,
   getKnowledgeDocumentPreview,
+  reindexKnowledgeBase,
   searchKnowledgeLocal,
 } from "./knowledgeBaseAdapter.js";
+import { readKnowledgeIndex } from "./knowledgeIndexStore.js";
+import {
+  addAgentKnowledgeContext as addStoredAgentKnowledgeContext,
+  clearAgentKnowledgeContexts as clearStoredAgentKnowledgeContexts,
+  listAgentKnowledgeContexts as listStoredAgentKnowledgeContexts,
+  removeAgentKnowledgeContext as removeStoredAgentKnowledgeContext,
+} from "./agentKnowledgeContextStore.js";
 import {
   getLocalIntelCenterData,
   getLocalIntelDashboardSummary,
@@ -101,6 +110,10 @@ const PHASE2_SOURCE_META = {
   },
 };
 
+function cleanString(value) {
+  return typeof value === "string" ? value.trim() : "";
+}
+
 function findSourceHealth(settings, meta) {
   return (
     settings.sources.find((source) => source.id === meta.rowId) ??
@@ -112,6 +125,48 @@ function findSourceHealth(settings, meta) {
       status: "unconfigured",
     })
   );
+}
+
+function findKnowledgeAttachment(index = {}, input = {}) {
+  const id = cleanString(input.id);
+  const requestedChunkId = cleanString(input.chunkId) || id;
+  const requestedDocumentId = cleanString(input.documentId) || id;
+  const chunk = requestedChunkId
+    ? index.chunks?.find((item) => item.chunkId === requestedChunkId || item.id === requestedChunkId)
+    : null;
+  const documentId = chunk?.documentId || requestedDocumentId;
+  const document = documentId
+    ? index.documents?.find((item) => item.id === documentId || item.documentId === documentId)
+    : null;
+
+  if (chunk) {
+    return {
+      chunkId: chunk.chunkId,
+      documentId: chunk.documentId,
+      matchType: cleanString(input.matchType) || "chunk",
+      preview: chunk.preview,
+      relativePath: chunk.relativePath || document?.relativePath,
+      score: Number.isFinite(input.score) ? input.score : 1,
+      sourceType: "knowledge",
+      title: chunk.title || document?.title || chunk.relativePath,
+      updatedAt: chunk.updatedAt || document?.updatedAt,
+    };
+  }
+
+  if (document) {
+    return {
+      documentId: document.id,
+      matchType: cleanString(input.matchType) || "document",
+      preview: document.preview,
+      relativePath: document.relativePath,
+      score: Number.isFinite(input.score) ? input.score : 1,
+      sourceType: "knowledge",
+      title: document.title,
+      updatedAt: document.updatedAt,
+    };
+  }
+
+  return null;
 }
 
 function attachSourceStatus(data, meta, sourceHealth, useMock) {
@@ -172,6 +227,19 @@ function sanitizeLlmMetadata(metadata = {}) {
   return Object.keys(sanitized).length > 0 ? sanitized : null;
 }
 
+function withContextProviderMetadata(contextSummary, metadata) {
+  if (!contextSummary) {
+    return null;
+  }
+
+  const providerMetadata = sanitizeLlmMetadata(metadata) ?? contextSummary.providerMetadata ?? null;
+
+  return {
+    ...contextSummary,
+    ...(providerMetadata ? { providerMetadata } : {}),
+  };
+}
+
 function getToolPolicy(input = {}) {
   return {
     approveAllLevel1: Boolean(input.approveAllLevel1),
@@ -195,7 +263,7 @@ function getToolLoopPayload(toolLoop = {}) {
   };
 }
 
-function buildToolGateAgentChatResult({ contextPack, draft, requestId, status, toolLoop }) {
+function buildToolGateAgentChatResult({ contextPack, contextSummary, draft, requestId, status, toolLoop }) {
   const message = status === "tool_error"
     ? "A read-only tool returned an error. Tool details are available in the timeline."
     : status === "denied"
@@ -210,6 +278,7 @@ function buildToolGateAgentChatResult({ contextPack, draft, requestId, status, t
       status,
       text: message,
     },
+    ...(contextSummary ? { contextSummary } : {}),
     contextPack,
     ...(requestId ? { requestId } : {}),
     status,
@@ -224,7 +293,7 @@ function buildToolGateAgentChatResult({ contextPack, draft, requestId, status, t
   };
 }
 
-function buildToolLlmErrorResult({ contextPack, draft, llmResult, requestId, toolLoop }) {
+function buildToolLlmErrorResult({ contextPack, contextSummary, draft, llmResult, requestId, toolLoop }) {
   const error = isApiResult(llmResult) ? llmResult.error : llmResult?.error;
   const message = redactAgentToolText(error?.message || "LLM request failed after read-only tools completed.");
 
@@ -236,6 +305,7 @@ function buildToolLlmErrorResult({ contextPack, draft, llmResult, requestId, too
       status: "error",
       text: `Tool results are available, but the final LLM summary failed. ${message}`,
     },
+    ...(contextSummary ? { contextSummary } : {}),
     contextPack,
     error: {
       code: redactAgentToolText(error?.code || "LLM_REQUEST_FAILED"),
@@ -255,7 +325,7 @@ function buildToolLlmErrorResult({ contextPack, draft, llmResult, requestId, too
   };
 }
 
-function buildAgentChatLlmResult({ contextPack, draft, llmData, requestId, toolLoop }) {
+function buildAgentChatLlmResult({ contextPack, contextSummary, draft, llmData, requestId, toolLoop }) {
   const metadata = sanitizeLlmMetadata(llmData?.metadata);
   const status = llmData?.status === "cancelled" ? "cancelled" : "ready";
   const assistantText = redactAgentToolText(llmData?.text ?? "");
@@ -270,6 +340,7 @@ function buildAgentChatLlmResult({ contextPack, draft, llmData, requestId, toolL
       status,
       text: assistantText,
     },
+    ...(contextSummary ? { contextSummary: withContextProviderMetadata(contextSummary, metadata) } : {}),
     contextPack,
     llm: {
       metadata,
@@ -314,6 +385,136 @@ export function createMainDataProvider(options = {}) {
       processEnv: options.processEnv,
     });
   }
+  function getAgentChatContextLimits() {
+    return {
+      ...(Number.isFinite(options.agentChatContextPackMaxItems)
+        ? { maxItems: options.agentChatContextPackMaxItems }
+        : {}),
+      ...(options.agentChatContextLimits && typeof options.agentChatContextLimits === "object"
+        ? options.agentChatContextLimits
+        : {}),
+    };
+  }
+  function getKnowledgeEmbeddingOptions() {
+    return {
+      ...(options.embedTexts ? { embedTexts: options.embedTexts } : {}),
+      ...(options.embeddingConfig ? { embeddingConfig: options.embeddingConfig } : {}),
+      ...(options.embeddingMaxBatchSize ? { embeddingMaxBatchSize: options.embeddingMaxBatchSize } : {}),
+      ...(options.embeddingMaxInputChars ? { embeddingMaxInputChars: options.embeddingMaxInputChars } : {}),
+      ...(options.embeddingPythonPath ? { embeddingPythonPath: options.embeddingPythonPath } : {}),
+      ...(options.embeddingRuntimeClient ? { embeddingRuntimeClient: options.embeddingRuntimeClient } : {}),
+      ...(options.embeddingSpawn ? { embeddingSpawn: options.embeddingSpawn } : {}),
+      ...(options.embeddingTimeoutMs ? { embeddingTimeoutMs: options.embeddingTimeoutMs } : {}),
+      ...(options.embeddingTransport ? { embeddingTransport: options.embeddingTransport } : {}),
+    };
+  }
+  function getContextStoreOptions() {
+    return {
+      userDataDir: options.userDataDir,
+    };
+  }
+  function selectAgentForContext(agentManagement = {}, draft = {}, agentChat = {}) {
+    const agents = Array.isArray(agentManagement.agents) ? agentManagement.agents : [];
+    const targetId = draft.agentId || agentChat.session?.activeAgentId;
+
+    return agents.find((agent) => (
+      agent.id === targetId ||
+      agent.agentId === targetId ||
+      agent.name === targetId
+    )) ?? agents[0] ?? null;
+  }
+  async function getAgentManagementContextData() {
+    const paths = await getConfiguredPaths(options);
+
+    return getAgentManagementData({
+      configPath: paths.agentManagementConfigPath,
+      rootDir: options.agentManagementRootDir,
+    }).catch(() => ({}));
+  }
+  async function buildAgentChatLlmContextPayload({ contextPack, draft, toolResultsSummary }) {
+    const [agentChat, agentManagement, providerMetadata] = await Promise.all([
+      provider.getAgentChat().catch(() => ({})),
+      getAgentManagementContextData(),
+      provider.getLlmProviderStatus().catch(() => ({})),
+    ]);
+
+    return buildAgentLlmContext(
+      {
+        agentConfig: selectAgentForContext(agentManagement, draft, agentChat),
+        attachedKnowledgeContexts: agentChat.attachedKnowledgeContexts,
+        contextPack,
+        providerMetadata,
+        session: agentChat,
+        toolResultsSummary,
+        userText: draft.userText,
+      },
+      getAgentChatContextLimits(),
+    );
+  }
+  async function resolveAgentKnowledgeContextSessionId(input = {}) {
+    const requestedSessionId = cleanString(input.sessionId);
+    if (requestedSessionId && requestedSessionId !== "local-session") {
+      return requestedSessionId;
+    }
+
+    if (!options.userDataDir) {
+      return requestedSessionId || "local-session";
+    }
+
+    try {
+      const paths = await getConfiguredPaths(options);
+      const agentChat = await getAgentChatData({
+        rootDir: options.agentChatRootDir,
+        sessionPath: paths.agentChatSessionPath,
+        userDataDir: options.userDataDir,
+      });
+      return cleanString(agentChat.session?.sessionId) || requestedSessionId || "local-session";
+    } catch {
+      return requestedSessionId || "local-session";
+    }
+  }
+  function mergeAgentKnowledgeContextLists(primary = {}, fallback = null) {
+    if (!fallback || primary.sessionId === fallback.sessionId) {
+      return primary;
+    }
+
+    const seen = new Set();
+    const attachedKnowledgeContexts = [
+      ...(Array.isArray(primary.attachedKnowledgeContexts) ? primary.attachedKnowledgeContexts : []),
+      ...(Array.isArray(fallback.attachedKnowledgeContexts) ? fallback.attachedKnowledgeContexts : []),
+    ].filter((context) => {
+      const id = cleanString(context?.contextId);
+      if (!id || seen.has(id)) {
+        return false;
+      }
+      seen.add(id);
+      return true;
+    });
+
+    return {
+      ...primary,
+      attachedKnowledgeContexts,
+      total: attachedKnowledgeContexts.length,
+    };
+  }
+  async function listResolvedAgentKnowledgeContexts(input = {}) {
+    const sessionId = await resolveAgentKnowledgeContextSessionId(input);
+    const primary = await listStoredAgentKnowledgeContexts({
+      ...input,
+      sessionId,
+    }, getContextStoreOptions());
+
+    if (sessionId === "local-session") {
+      return primary;
+    }
+
+    const fallback = await listStoredAgentKnowledgeContexts({
+      ...input,
+      sessionId: "local-session",
+    }, getContextStoreOptions());
+
+    return mergeAgentKnowledgeContextLists(primary, fallback);
+  }
 
   const provider = {
     ...mockProvider,
@@ -327,6 +528,11 @@ export function createMainDataProvider(options = {}) {
         sessionPath: paths.agentChatSessionPath,
         userDataDir: options.userDataDir,
       });
+      const attachedContexts = options.userDataDir
+        ? await listStoredAgentKnowledgeContexts({
+            sessionId: agentChat.session?.sessionId,
+          }, getContextStoreOptions())
+        : { attachedKnowledgeContexts: [], total: 0 };
       const [llmProviderStatus, permissionRequests] = await Promise.all([
         provider.getLlmProviderStatus(),
         provider.listPermissionRequests(),
@@ -334,6 +540,8 @@ export function createMainDataProvider(options = {}) {
 
       return {
         ...agentChat,
+        attachedKnowledgeContexts: attachedContexts.attachedKnowledgeContexts,
+        attachedKnowledgeContextCount: attachedContexts.total,
         llmProviderStatus,
         permissionSummary: permissionRequests[0] ?? null,
       };
@@ -385,9 +593,16 @@ export function createMainDataProvider(options = {}) {
         });
       }
 
+      const llmContext = await buildAgentChatLlmContextPayload({
+        contextPack: toolLoop.contextPack,
+        draft,
+        toolResultsSummary: toolLoop.toolResultsSummary,
+      });
       const llmResult = await provider.sendLlmTextMessage({
         ...draft,
         contextPack: toolLoop.contextPack,
+        contextSummary: llmContext.contextSummary,
+        messages: llmContext.messages,
         toolResultsSummary: toolLoop.toolResultsSummary,
         userText: draft.userText,
       });
@@ -396,6 +611,7 @@ export function createMainDataProvider(options = {}) {
         if (toolLoop.toolResultsSummary?.length > 0) {
           const result = buildToolLlmErrorResult({
             contextPack: toolLoop.contextPack,
+            contextSummary: llmContext.contextSummary,
             draft,
             llmResult,
             toolLoop,
@@ -406,6 +622,7 @@ export function createMainDataProvider(options = {}) {
               {
                 assistantMessage: result.assistantMessage,
                 createdAt: draft.createdAt,
+                contextSummary: result.contextSummary,
                 providerMetadata: result.llm?.metadata ?? result.assistantMessage.metadata,
                 toolCalls: result.toolCalls,
                 toolDecisions: result.toolDecisions,
@@ -425,6 +642,7 @@ export function createMainDataProvider(options = {}) {
       const llmData = isApiResult(llmResult) ? llmResult.data : llmResult;
       const result = buildAgentChatLlmResult({
         contextPack: toolLoop.contextPack,
+        contextSummary: llmContext.contextSummary,
         draft,
         llmData,
         toolLoop,
@@ -435,6 +653,7 @@ export function createMainDataProvider(options = {}) {
           {
             assistantMessage: result.assistantMessage,
             createdAt: draft.createdAt,
+            contextSummary: result.contextSummary,
             providerMetadata: result.llm?.metadata ?? result.assistantMessage.metadata,
             toolCalls: result.toolCalls,
             toolDecisions: result.toolDecisions,
@@ -482,10 +701,17 @@ export function createMainDataProvider(options = {}) {
           });
         }
 
+        const llmContext = await buildAgentChatLlmContextPayload({
+          contextPack: toolLoop.contextPack,
+          draft,
+          toolResultsSummary: toolLoop.toolResultsSummary,
+        });
         const llmResult = await provider.streamLlmTextMessage(
           {
             ...draft,
             contextPack: toolLoop.contextPack,
+            contextSummary: llmContext.contextSummary,
+            messages: llmContext.messages,
             requestId,
             toolResultsSummary: toolLoop.toolResultsSummary,
             userText: draft.userText,
@@ -498,13 +724,33 @@ export function createMainDataProvider(options = {}) {
 
         if (isApiResult(llmResult) && !llmResult.ok) {
           if (toolLoop.toolResultsSummary?.length > 0) {
-            return buildToolLlmErrorResult({
+            const result = buildToolLlmErrorResult({
               contextPack: toolLoop.contextPack,
+              contextSummary: llmContext.contextSummary,
               draft,
               llmResult,
               requestId,
               toolLoop,
             });
+
+            if (options.userDataDir && result.assistantMessage.text) {
+              await appendAgentChatSessionTurn(
+                {
+                  assistantMessage: result.assistantMessage,
+                  createdAt: draft.createdAt,
+                  contextSummary: result.contextSummary,
+                  providerMetadata: result.llm?.metadata ?? result.assistantMessage.metadata,
+                  toolCalls: result.toolCalls,
+                  toolDecisions: result.toolDecisions,
+                  toolPlan: result.toolPlan,
+                  toolResultsSummary: result.toolResultsSummary,
+                  userMessage: result.userMessage,
+                },
+                { userDataDir: options.userDataDir },
+              );
+            }
+
+            return result;
           }
           return llmResult;
         }
@@ -512,6 +758,7 @@ export function createMainDataProvider(options = {}) {
         const llmData = isApiResult(llmResult) ? llmResult.data : llmResult;
         const result = buildAgentChatLlmResult({
           contextPack: toolLoop.contextPack,
+          contextSummary: llmContext.contextSummary,
           draft,
           llmData,
           requestId,
@@ -523,6 +770,7 @@ export function createMainDataProvider(options = {}) {
             {
               assistantMessage: result.assistantMessage,
               createdAt: draft.createdAt,
+              contextSummary: result.contextSummary,
               providerMetadata: result.llm?.metadata ?? result.assistantMessage.metadata,
               toolCalls: result.toolCalls,
               toolDecisions: result.toolDecisions,
@@ -550,6 +798,116 @@ export function createMainDataProvider(options = {}) {
       return {
         requestId,
         status: "cancelled",
+      };
+    },
+    async listAgentChatKnowledgeContexts(input = {}) {
+      const sessionId = await resolveAgentKnowledgeContextSessionId(input);
+      if (!options.userDataDir) {
+        return {
+          attachedKnowledgeContexts: [],
+          sessionId,
+          status: "unavailable",
+          total: 0,
+        };
+      }
+
+      return listResolvedAgentKnowledgeContexts(input);
+    },
+    async attachKnowledgeContextToAgentChat(input = {}) {
+      const sessionId = await resolveAgentKnowledgeContextSessionId(input);
+      if (!options.userDataDir) {
+        return {
+          attachedKnowledgeContexts: [],
+          sessionId,
+          status: "unavailable",
+          total: 0,
+        };
+      }
+
+      const { sourceHealth } = await getKnowledgeSourceContext();
+      if (!canReadLocalSource(sourceHealth)) {
+        return {
+          attachedKnowledgeContexts: [],
+          sessionId,
+          status: sourceHealth.configured ? "unavailable" : "unconfigured",
+          total: 0,
+        };
+      }
+
+      const index = await readKnowledgeIndex({ userDataDir: options.userDataDir });
+      const attachment = findKnowledgeAttachment(index, input);
+      if (!attachment) {
+        return {
+          ...(await listStoredAgentKnowledgeContexts({
+            ...input,
+            sessionId,
+          }, getContextStoreOptions())),
+          status: "not_found",
+        };
+      }
+
+      return addStoredAgentKnowledgeContext({
+        ...attachment,
+        sessionId,
+      }, getContextStoreOptions());
+    },
+    async removeKnowledgeContextFromAgentChat(input = {}) {
+      const sessionId = await resolveAgentKnowledgeContextSessionId(input);
+      if (!options.userDataDir) {
+        return {
+          attachedKnowledgeContexts: [],
+          sessionId,
+          status: "unavailable",
+          total: 0,
+        };
+      }
+
+      await removeStoredAgentKnowledgeContext({
+        ...input,
+        sessionId,
+      }, getContextStoreOptions());
+      if (sessionId !== "local-session") {
+        await removeStoredAgentKnowledgeContext({
+          ...input,
+          sessionId: "local-session",
+        }, getContextStoreOptions());
+      }
+
+      return {
+        ...(await listResolvedAgentKnowledgeContexts({
+          ...input,
+          sessionId,
+        })),
+        status: "removed",
+      };
+    },
+    async clearAgentChatKnowledgeContexts(input = {}) {
+      const sessionId = await resolveAgentKnowledgeContextSessionId(input);
+      if (!options.userDataDir) {
+        return {
+          attachedKnowledgeContexts: [],
+          sessionId,
+          status: "unavailable",
+          total: 0,
+        };
+      }
+
+      await clearStoredAgentKnowledgeContexts({
+        ...input,
+        sessionId,
+      }, getContextStoreOptions());
+      if (sessionId !== "local-session") {
+        await clearStoredAgentKnowledgeContexts({
+          ...input,
+          sessionId: "local-session",
+        }, getContextStoreOptions());
+      }
+
+      return {
+        attachedKnowledgeContexts: [],
+        sessionId,
+        status: "cleared",
+        total: 0,
       };
     },
     async getCodeRepository() {
@@ -587,7 +945,10 @@ export function createMainDataProvider(options = {}) {
       }
 
       return attachSourceStatus(
-        await getKnowledgeBaseData({ rootDir: paths.knowledgeBaseRootDir }),
+        await getKnowledgeBaseData({
+          rootDir: paths.knowledgeBaseRootDir,
+          userDataDir: options.userDataDir,
+        }),
         PHASE2_SOURCE_META.knowledge,
         sourceHealth,
         false,
@@ -735,9 +1096,44 @@ export function createMainDataProvider(options = {}) {
       }
 
       return searchKnowledgeLocal({
+        ...getKnowledgeEmbeddingOptions(),
         query,
         rootDir: paths.knowledgeBaseRootDir,
+        userDataDir: options.userDataDir,
       });
+    },
+    async startKnowledgeIndex() {
+      const { paths, sourceHealth } = await getKnowledgeSourceContext();
+
+      if (!canReadLocalSource(sourceHealth)) {
+        return {
+          message: sourceHealth.message,
+          source: "knowledge-index",
+          status: sourceHealth.configured ? "unavailable" : "unconfigured",
+          summary: {
+            chunks: 0,
+            docs: 0,
+            failed: 0,
+            indexed: 0,
+            scanned: 0,
+            skipped: 0,
+          },
+        };
+      }
+
+      const result = await reindexKnowledgeBase({
+        ...getKnowledgeEmbeddingOptions(),
+        rootDir: paths.knowledgeBaseRootDir,
+        userDataDir: options.userDataDir,
+      });
+
+      return {
+        ...(result.embeddingSummary ? { embeddingSummary: result.embeddingSummary } : {}),
+        source: result.source,
+        status: result.status,
+        summary: result.summary,
+        updatedAt: result.updatedAt,
+      };
     },
     async getKnowledgeDocumentPreview(documentId) {
       const { paths, sourceHealth } = await getKnowledgeSourceContext();
@@ -749,6 +1145,7 @@ export function createMainDataProvider(options = {}) {
       return getKnowledgeDocumentPreview({
         id: documentId,
         rootDir: paths.knowledgeBaseRootDir,
+        userDataDir: options.userDataDir,
       });
     },
     async listCodeRepositories() {

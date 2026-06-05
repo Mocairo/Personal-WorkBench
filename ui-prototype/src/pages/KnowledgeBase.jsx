@@ -1,10 +1,11 @@
 import React, { useState } from "react";
-import { Circle, Database, FileText, Network, Plus, RefreshCcw, Search } from "lucide-react";
+import { Circle, Database, FileText, Network, Paperclip, Plus, RefreshCcw, Search } from "lucide-react";
 import { EmptyState } from "../components/ui/EmptyState";
 import { GlassPanel } from "../components/ui/GlassPanel";
 import { PageFrame } from "../components/ui/PageFrame";
 import { PanelHeader } from "../components/ui/PanelHeader";
 import { useKnowledgeBaseData } from "../hooks/usePageData";
+import { dataProvider } from "../services/dataProvider";
 
 const DEFAULT_INDEX_STATS = {
   chunks: 1248,
@@ -19,6 +20,23 @@ const DOCUMENT_FALLBACKS = [
   { chunks: 41, kind: "pdf", tag: "reference", updated: "28m", state: "queued" },
   { chunks: 19, kind: "txt", tag: "notes", updated: "1h", state: "failed" },
 ];
+
+const DISPLAY_SECRET_ASSIGNMENT_PATTERN = /\b(api[_-]?key|token|secret|password)\s*[:=]\s*[^\s,;]+/gi;
+const DISPLAY_AUTHORIZATION_PATTERN = /\bAuthorization:\s*Bearer\s+[^\s,;]+/gi;
+const DISPLAY_OPENAI_KEY_PATTERN = /\bsk-[A-Za-z0-9_-]+/g;
+const DISPLAY_WINDOWS_PATH_PATTERN = /\b[A-Za-z]:\\[^\s"']+/g;
+
+function redactDisplayText(value) {
+  if (typeof value !== "string") {
+    return "";
+  }
+
+  return value
+    .replace(DISPLAY_AUTHORIZATION_PATTERN, "[redacted]")
+    .replace(DISPLAY_SECRET_ASSIGNMENT_PATTERN, "[redacted]")
+    .replace(DISPLAY_OPENAI_KEY_PATTERN, "[redacted]")
+    .replace(DISPLAY_WINDOWS_PATH_PATTERN, "[redacted-path]");
+}
 
 export function getKnowledgeDisplayData(data) {
   return {
@@ -68,17 +86,149 @@ export function filterKnowledgeDocumentRows(rows = [], query = "") {
   });
 }
 
+function limitDisplayText(value, maxChars = 480) {
+  const text = redactDisplayText(value);
+  if (text.length <= maxChars) {
+    return text;
+  }
+
+  return `${text.slice(0, Math.max(0, maxChars - 3))}...`;
+}
+
+export function getKnowledgeAttachmentInput(doc = {}, sessionId = "local-session") {
+  return {
+    ...(doc.id || doc.documentId ? { documentId: redactDisplayText(doc.documentId ?? doc.id) } : {}),
+    ...(doc.chunkId ? { chunkId: redactDisplayText(doc.chunkId) } : {}),
+    matchType: redactDisplayText(doc.matchType ?? "document"),
+    preview: limitDisplayText(doc.preview ?? doc.excerpt),
+    relativePath: redactDisplayText(doc.relativePath ?? doc.path),
+    score: Number.isFinite(doc.score) ? doc.score : 1,
+    sessionId: redactDisplayText(sessionId) || "local-session",
+    sourceType: "knowledge",
+    title: redactDisplayText(doc.title ?? doc.name ?? doc.relativePath ?? "Knowledge context"),
+    updatedAt: redactDisplayText(doc.updatedAt),
+  };
+}
+
+export async function attachKnowledgeDocumentToAgentChat(doc = {}, provider = dataProvider, sessionId = "local-session") {
+  return provider.attachKnowledgeContextToAgentChat(getKnowledgeAttachmentInput(doc, sessionId));
+}
+
+function countLabel(value = 0, noun = "item") {
+  return `${Number.isFinite(value) ? value : 0} ${noun}`;
+}
+
+function getEmbeddingStatusRows(indexStats = {}) {
+  const embedding = indexStats.embedding ?? indexStats.embeddingSummary;
+  if (!embedding || typeof embedding !== "object") {
+    return [];
+  }
+
+  const provider = redactDisplayText(embedding.provider ?? "");
+  const model = redactDisplayText(embedding.model ?? "");
+  const providerStatus = redactDisplayText(embedding.providerStatus ?? indexStats.embeddingStatus ?? "unavailable");
+  const providerLabel = provider && model ? `${provider}/${model}` : "keyword";
+  const embedded = Number.isFinite(embedding.embedded) ? embedding.embedded : 0;
+  const skipped = Number.isFinite(embedding.skipped) ? embedding.skipped : 0;
+  const failed = Number.isFinite(embedding.failed) ? embedding.failed : 0;
+
+  return [
+    { label: "embedding", value: `${providerLabel} (${providerStatus})` },
+    { label: "vectors", value: `${embedded} embedded / ${skipped} skipped` },
+    { label: "embedding failed", value: countLabel(failed, "chunk") },
+  ];
+}
+
+export function getKnowledgeIndexStatusRows(indexStats = {}, providerStatus = {}, sourceHealth = {}, reindexStatus = null) {
+  const queue = indexStats.queue ?? indexStats.pending ?? 0;
+  const failed = indexStats.failed ?? 0;
+  const skipped = indexStats.skipped ?? 0;
+  const lastIndexed = indexStats.lastIndexed ?? indexStats.updatedAt ?? "not indexed";
+  const rows = [
+    { label: "source", value: redactDisplayText(providerStatus.status ?? indexStats.source ?? "unknown") },
+    { label: "path", value: redactDisplayText(sourceHealth.path || providerStatus.message || "") },
+    { label: "queue", value: `${queue} pending` },
+    { label: "failed", value: countLabel(failed, "chunk") },
+    { label: "skipped", value: countLabel(skipped, "item") },
+    ...getEmbeddingStatusRows(indexStats),
+    { label: "last indexed", value: redactDisplayText(lastIndexed) },
+  ];
+
+  if (reindexStatus?.status) {
+    rows.push({
+      label: "reindex",
+      value: redactDisplayText(reindexStatus.message ?? reindexStatus.status),
+    });
+  }
+
+  return rows;
+}
+
+export async function runKnowledgeReindex(provider = dataProvider, reload = () => {}) {
+  try {
+    const result = await provider.startKnowledgeIndex();
+    const summary = result?.summary ?? {};
+    const embedding = result?.embeddingSummary ?? summary.embedding;
+    const embeddingStatus = embedding?.providerStatus
+      ? embedding.providerStatus === "ready" && Number.isFinite(embedding.embedded)
+        ? ` / ${embedding.embedded} vectors ready`
+        : ` / embeddings ${redactDisplayText(embedding.providerStatus)}`
+      : "";
+    await Promise.resolve(reload());
+
+    return {
+      message: `${summary.docs ?? 0} docs / ${summary.chunks ?? 0} chunks${embeddingStatus}`,
+      result,
+      status: result?.status === "ready" || result?.status === "error" ? "done" : result?.status || "done",
+    };
+  } catch (error) {
+    return {
+      message: error?.message || "Reindex unavailable",
+      status: "error",
+    };
+  }
+}
+
 export function KnowledgeBase() {
   const [searchQuery, setSearchQuery] = useState("");
-  const { data } = useKnowledgeBaseData();
+  const [reindexStatus, setReindexStatus] = useState(null);
+  const [reindexBusy, setReindexBusy] = useState(false);
+  const [attachStatus, setAttachStatus] = useState(null);
+  const [attachedIds, setAttachedIds] = useState(() => new Set());
+  const { data, reload } = useKnowledgeBaseData();
   const { graphNodes, indexStats, knowledgeDocuments, providerStatus, sourceHealth } = getKnowledgeDisplayData(data);
   const documentRows = getKnowledgeDocumentRows(knowledgeDocuments);
   const visibleDocumentRows = filterKnowledgeDocumentRows(documentRows, searchQuery);
   const selectedNode = graphNodes[0] ?? "No node";
-  const embeddingProvider = indexStats.embeddingProvider ?? "local/bge-small";
-  const failed = indexStats.failed ?? 1;
-  const queue = indexStats.queue ?? indexStats.pending;
-  const lastIndexed = indexStats.lastIndexed ?? "2m ago";
+  const indexMode = indexStats.embeddingProvider ?? "keyword";
+  const indexStatusRows = getKnowledgeIndexStatusRows(indexStats, providerStatus, sourceHealth, reindexStatus);
+
+  const handleReindex = async () => {
+    if (reindexBusy) {
+      return;
+    }
+
+    setReindexBusy(true);
+    setReindexStatus({ message: "Indexing docs and embeddings...", status: "running" });
+    const result = await runKnowledgeReindex(dataProvider, reload);
+    setReindexStatus(result);
+    setReindexBusy(false);
+  };
+
+  const handleAttachDocument = async (doc) => {
+    const docId = doc.id ?? doc.documentId ?? doc.relativePath ?? doc.title;
+    setAttachStatus({ message: "Attaching context...", status: "running" });
+    try {
+      const result = await attachKnowledgeDocumentToAgentChat(doc, dataProvider, "local-session");
+      setAttachedIds((current) => new Set([...current, docId]));
+      setAttachStatus({
+        message: `${result.attachedKnowledgeContexts?.length ?? 1} context attached`,
+        status: result.status ?? "saved",
+      });
+    } catch (error) {
+      setAttachStatus({ message: error?.message || "Attach unavailable", status: "error" });
+    }
+  };
 
   return (
     <PageFrame
@@ -91,10 +241,13 @@ export function KnowledgeBase() {
             <Plus size={15} />
             Import
           </button>
-          <button className="soft-button muted" type="button">
+          <button className="soft-button muted" disabled={reindexBusy} onClick={handleReindex} type="button">
             <RefreshCcw size={15} />
-            Reindex
+            {reindexBusy ? "Indexing..." : "Reindex"}
           </button>
+          <span className="settings-save-state">
+            {attachStatus?.message ?? reindexStatus?.message ?? indexStats.status ?? "index local"}
+          </span>
         </>
       }
     >
@@ -123,8 +276,10 @@ export function KnowledgeBase() {
                 detail={documentRows.length === 0 ? "Choose a knowledge folder in Settings." : "Try another local keyword."}
               />
             ) : (
-              visibleDocumentRows.map((doc) => (
-                <div className={`document-row rich ${doc.state}`} key={doc.id ?? doc.relativePath ?? doc.title}>
+              visibleDocumentRows.map((doc) => {
+                const docKey = doc.id ?? doc.documentId ?? doc.relativePath ?? doc.title;
+                return (
+                <div className={`document-row rich ${doc.state}`} key={docKey}>
                   <FileText size={17} />
                   <div>
                     <strong>{doc.title}</strong>
@@ -132,9 +287,18 @@ export function KnowledgeBase() {
                       {doc.kind} / {doc.tag} / {doc.chunks} chunks / {doc.updated}
                     </small>
                   </div>
-                  <span>{doc.state}</span>
+                  <span>{attachedIds.has(docKey) ? "attached" : doc.state}</span>
+                  <button
+                    aria-label={`Attach ${doc.title} to Agent Chat`}
+                    className="icon-button ghost"
+                    onClick={() => handleAttachDocument(doc)}
+                    type="button"
+                  >
+                    <Paperclip size={14} />
+                  </button>
                 </div>
-              ))
+                );
+              })
             )}
           </div>
         </GlassPanel>
@@ -188,13 +352,11 @@ export function KnowledgeBase() {
           <div className="index-provider-list">
             <span>
               <Database size={14} />
-              embedding: {embeddingProvider}
+              index: {indexMode}
             </span>
-            <span>source: {providerStatus.status}</span>
-            <span>path: {sourceHealth.path || providerStatus.message}</span>
-            <span>queue: {queue} pending</span>
-            <span>failed: {failed} chunk</span>
-            <span>last indexed: {lastIndexed}</span>
+            {indexStatusRows.map((row) => (
+              <span key={row.label}>{row.label}: {row.value}</span>
+            ))}
           </div>
         </GlassPanel>
       </div>

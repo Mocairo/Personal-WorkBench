@@ -8,4 +8,12 @@ describe("index document", () => {
     expect(html).toContain('rel="icon"');
     expect(html).toContain("data:image/svg+xml");
   });
+
+  it("sets a Content Security Policy for the Electron renderer", async () => {
+    const html = await fs.readFile("index.html", "utf8");
+
+    expect(html).toContain('http-equiv="Content-Security-Policy"');
+    expect(html).toContain("default-src 'self'");
+    expect(html).not.toContain("'unsafe-eval'");
+  });
 });
