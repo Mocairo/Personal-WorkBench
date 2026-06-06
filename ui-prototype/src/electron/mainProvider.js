@@ -1,3 +1,4 @@
+import fs from "node:fs/promises";
 import path from "node:path";
 import * as mockProvider from "../services/mockProvider.js";
 import { redactSecretText } from "../shared/llmSecurityContracts.js";
@@ -10,6 +11,7 @@ import {
   previewToolPlan,
   runDryMessage,
 } from "./agentDryRunAdapter.js";
+import { runAgentLoop } from "./agentLoop.js";
 import { runAgentToolLoop } from "./agentToolOrchestrator.js";
 import { redactAgentToolText } from "./agentToolRegistry.js";
 import { getAgentManagementData } from "./agentManagementAdapter.js";
@@ -777,116 +779,130 @@ export function createMainDataProvider(options = {}) {
       activeAgentChatStreams.set(requestId, abortController);
 
       try {
-        const draft = await prepareMessageDraft({
-          ...input,
-          requestId,
-        });
-        const contextPack = await previewContextPack(draft, {
-          maxItems: options.agentChatContextPackMaxItems,
-          provider,
-        });
-        const agentChatForToolPlan = await provider.getAgentChat().catch(() => ({}));
-        const toolLoop = await runAgentToolLoop({
-          contextPack,
-          draft,
-          dryRunToolPlan: input.dryRunToolPlan,
-          llmText: input.llmToolPlanText,
-          provider,
-          session: agentChatForToolPlan,
-          toolPlan: input.toolPlan,
-          toolPolicy: getToolPolicy(input),
-        });
+        const agentChat = await provider.getAgentChat().catch(() => ({}));
+        const agentConfig = await getAgentManagementData().then(
+          (d) => (Array.isArray(d?.agents) ? d.agents : []).find((a) => a.id === input.agentId) ?? null,
+        ).catch(() => null);
+        const knowledgeContexts = await provider.getAgentChatKnowledgeContexts?.().catch(() => []) ?? [];
 
-        if (!toolLoop.shouldCallLlm) {
-          return buildToolGateAgentChatResult({
-            contextPack: toolLoop.contextPack,
-            draft,
-            requestId,
-            status: toolLoop.status,
-            toolLoop,
-          });
-        }
-
-        const llmContext = await buildAgentChatLlmContextPayload({
-          contextPack: toolLoop.contextPack,
-          draft,
-          toolResultsSummary: toolLoop.toolResultsSummary,
-        });
-        const llmContextPack = filterAgentChatLlmContextPack(toolLoop.contextPack);
-        const llmResult = await provider.streamLlmTextMessage(
-          {
-            ...draft,
-            contextPack: llmContextPack,
-            contextSummary: llmContext.contextSummary,
-            messages: llmContext.messages,
-            requestId,
-            toolResultsSummary: toolLoop.toolResultsSummary,
-            userText: draft.userText,
-          },
+        const loopResult = await runAgentLoop(
           {
             abortSignal: abortController.signal,
-            onEvent: streamOptions.onEvent,
+            agentConfig,
+            attachedKnowledgeContexts: Array.isArray(knowledgeContexts?.attachedKnowledgeContexts)
+              ? knowledgeContexts.attachedKnowledgeContexts
+              : [],
+            llmClient: (llmInput, llmOpts) => provider.streamLlmTextMessage(llmInput, {
+              abortSignal: abortController.signal,
+              ...llmOpts,
+            }),
+            provider,
+            requestId,
+            session: agentChat,
+            toolPolicy: getToolPolicy(input),
+            userText: input.userText,
+          },
+          {
+            onToken: (token, event) => {
+              streamOptions.onEvent?.({
+                metadata: event?.metadata,
+                requestId,
+                status: "generating",
+                text: event?.text ?? token,
+                token,
+                type: "token",
+              });
+            },
+            onToolCall: (info) => {
+              streamOptions.onEvent?.({
+                requestId,
+                toolCall: info,
+                type: "tool_call",
+              });
+            },
+            onRoundStart: (round) => {
+              streamOptions.onEvent?.({
+                requestId,
+                round,
+                type: "round",
+              });
+            },
           },
         );
 
-        if (isApiResult(llmResult) && !llmResult.ok) {
-          if (toolLoop.toolResultsSummary?.length > 0) {
-            const result = buildToolLlmErrorResult({
-              contextPack: toolLoop.contextPack,
-              contextSummary: llmContext.contextSummary,
-              draft,
-              llmResult,
-              requestId,
-              toolLoop,
-            });
+        const userMessage = {
+          id: `user-${requestId}`,
+          role: "user",
+          text: redactAgentToolText(input.userText),
+        };
+        const rawMetadata = loopResult.metadata;
+        const safeMetadata = rawMetadata ? {
+          completionId: rawMetadata.completionId,
+          finishReason: rawMetadata.finishReason,
+          model: rawMetadata.model,
+          provider: rawMetadata.provider,
+          toolCalls: rawMetadata.toolCalls,
+        } : null;
 
-            if (options.userDataDir && result.assistantMessage.text) {
-              await appendAgentChatSessionTurn(
-                {
-                  assistantMessage: result.assistantMessage,
-                  createdAt: draft.createdAt,
-                  contextSummary: result.contextSummary,
-                  providerMetadata: result.llm?.metadata ?? result.assistantMessage.metadata,
-                  toolCalls: result.toolCalls,
-                  toolDecisions: result.toolDecisions,
-                  toolPlan: result.toolPlan,
-                  toolResultsSummary: result.toolResultsSummary,
-                  userMessage: result.userMessage,
-                },
-                { userDataDir: options.userDataDir },
-              );
-            }
+        const assistantMessage = {
+          id: `assistant-${requestId}`,
+          metadata: safeMetadata,
+          role: "assistant",
+          source: "llm",
+          status: loopResult.status === "cancelled" ? "cancelled" : loopResult.status === "error" ? "error" : "ready",
+          text: loopResult.content,
+        };
+        const toolCalls = (loopResult.toolCallHistory || []).map((tc) => ({
+          duration: tc.round ? `round ${tc.round}` : "n/a",
+          meta: tc.summary || tc.label || "",
+          permission: tc.permission || `Level ${tc.permissionLevel ?? 1}`,
+          state: tc.state,
+          status: tc.status,
+          title: tc.label || tc.toolId,
+          toolId: tc.toolId,
+        }));
 
-            return result;
-          }
-          return llmResult;
-        }
-
-        const llmData = isApiResult(llmResult) ? llmResult.data : llmResult;
-        const result = buildAgentChatLlmResult({
-          contextPack: toolLoop.contextPack,
-          contextSummary: llmContext.contextSummary,
-          draft,
-          llmData,
+        const result = {
+          assistantMessage,
+          contextSummary: loopResult.contextSummary,
           requestId,
-          toolLoop,
-        });
+          status: loopResult.status === "approval_required" ? "approval_required" : loopResult.status || "ready",
+          toolCallHistory: loopResult.toolCallHistory,
+          toolCalls,
+          toolDecisions: loopResult.toolDecisions,
+          toolResultsSummary: loopResult.toolResultsSummary,
+          userMessage,
+        };
 
-        if (options.userDataDir && result.status !== "cancelled" && result.assistantMessage.text) {
+        if (options.userDataDir && assistantMessage.status !== "cancelled" && assistantMessage.text) {
           await appendAgentChatSessionTurn(
             {
-              assistantMessage: result.assistantMessage,
-              createdAt: draft.createdAt,
+              assistantMessage,
               contextSummary: result.contextSummary,
-              providerMetadata: result.llm?.metadata ?? result.assistantMessage.metadata,
               toolCalls: result.toolCalls,
               toolDecisions: result.toolDecisions,
-              toolPlan: result.toolPlan,
               toolResultsSummary: result.toolResultsSummary,
-              userMessage: result.userMessage,
+              userMessage,
             },
             { userDataDir: options.userDataDir },
           );
+        }
+
+        if (assistantMessage.status !== "cancelled" && assistantMessage.status !== "error") {
+          streamOptions.onEvent?.({
+            metadata: loopResult.metadata,
+            requestId,
+            status: "done",
+            text: assistantMessage.text,
+            type: "done",
+          });
+        } else {
+          streamOptions.onEvent?.({
+            requestId,
+            status: assistantMessage.status,
+            text: assistantMessage.text,
+            type: assistantMessage.status,
+          });
         }
 
         return result;
@@ -1319,6 +1335,42 @@ export function createMainDataProvider(options = {}) {
         rootDir: paths.knowledgeBaseRootDir,
         userDataDir: options.userDataDir,
       });
+    },
+    async getKnowledgeDocumentImage(imageInput = {}) {
+      const { paths, sourceHealth } = await getKnowledgeSourceContext();
+      if (!canReadLocalSource(sourceHealth)) {
+        return { dataUrl: null, status: "unavailable" };
+      }
+
+      const rootDir = paths.knowledgeBaseRootDir;
+      const relativePath = typeof (imageInput.relativePath ?? imageInput.path) === "string"
+        ? (imageInput.relativePath ?? imageInput.path).trim()
+        : "";
+      if (!relativePath || relativePath.includes("..")) {
+        return { dataUrl: null, status: "invalid_path" };
+      }
+
+      const absolutePath = path.resolve(rootDir, relativePath);
+      if (!absolutePath.startsWith(path.resolve(rootDir))) {
+        return { dataUrl: null, status: "invalid_path" };
+      }
+
+      try {
+        const buffer = await fs.readFile(absolutePath);
+        const ext = path.extname(absolutePath).toLowerCase();
+        const mimeMap = {
+          ".gif": "image/gif",
+          ".jpeg": "image/jpeg",
+          ".jpg": "image/jpeg",
+          ".png": "image/png",
+          ".svg": "image/svg+xml",
+          ".webp": "image/webp",
+        };
+        const mime = mimeMap[ext] ?? "application/octet-stream";
+        return { dataUrl: `data:${mime};base64,${buffer.toString("base64")}`, status: "ok" };
+      } catch {
+        return { dataUrl: null, status: "not_found" };
+      }
     },
     async listCodeRepositories() {
       const paths = await getConfiguredPaths(options);

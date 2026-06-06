@@ -1043,12 +1043,8 @@ export function AgentChat() {
                     <FileText size={15} />
                     <div>
                       <strong>{item.title}</strong>
-                      <small>
-                        {item.messageCount} messages
-                        {item.preview ? ` / ${item.preview}` : ""}
-                      </small>
+                      <small>{item.messageCount} messages</small>
                     </div>
-                    <time>{item.lastUpdated || "saved"}</time>
                   </button>
                 ))}
               </div>
@@ -1084,7 +1080,7 @@ export function AgentChat() {
                         ))}
                       </div>
                     ) : null}
-                    <div className="message-refs">
+                    <div className="message-refs" style={{ display: "none" }}>
                       <small>{message.role === "user" ? "local session" : redactDisplayText(message.source ?? "llm")}</small>
                       <small>{redactDisplayText(message.status ?? "ready")}</small>
                     </div>
@@ -1133,44 +1129,45 @@ export function AgentChat() {
         </GlassPanel>
 
         <GlassPanel className="tool-panel">
-          <PanelHeader icon={TerminalSquare} title="Tool timeline" aside="guarded" />
+          <PanelHeader icon={TerminalSquare} title="Tool timeline" aside={`${timelineRows.length} calls`} />
           <div className="tool-timeline">
             {timelineRows.length === 0 ? (
-              <EmptyState title="No tool calls" detail="Tool activity will appear when a session records it." />
+              <EmptyState title="No tool calls" detail="Tool activity will appear here." />
             ) : (
-              timelineRows.map((tool) => (
-                <div className={`tool-step ${tool.state}`} key={tool.title}>
-                  <i />
-                  <div>
-                    <strong>{tool.title}</strong>
-                    <small>{tool.meta}</small>
-                    <span className="tool-step-meta">
-                      <small>{tool.duration}</small>
-                      <small>{tool.permission}</small>
-                    </span>
-                    {(tool.state === "pending" || tool.status === "pending") && (tool.permissionLevel ?? 1) <= 1 ? (
-                      <span className="tool-step-actions">
-                        <button
-                          aria-label={`Approve ${tool.title}`}
-                          onClick={() => approvePendingTools({ approvedToolIds: [tool.toolId] })}
-                          type="button"
-                        >
-                          <Check size={13} />
-                        </button>
-                        {toolApprovalState.canApproveAllLevel1 ? (
+              timelineRows.map((tool) => {
+                const statusIcon = tool.state === "completed" ? "✓" : tool.state === "running" ? "…" : tool.state === "error" ? "✗" : tool.state === "pending" || tool.state === "pending_approval" ? "?" : "–";
+                return (
+                  <div className={`tool-step ${tool.state}`} key={tool.title}>
+                    <i />
+                    <div>
+                      <strong>{tool.title}</strong>
+                      <span className="tool-step-meta">
+                        <small className={`tool-status-badge ${tool.state}`}>{statusIcon} {tool.state}</small>
+                      </span>
+                      {(tool.state === "pending" || tool.status === "pending") && (tool.permissionLevel ?? 1) <= 1 ? (
+                        <span className="tool-step-actions">
                           <button
-                            aria-label="Approve all Level 1 read-only tools"
-                            onClick={() => approvePendingTools({ approveAllLevel1: true })}
+                            aria-label={`Approve ${tool.title}`}
+                            onClick={() => approvePendingTools({ approvedToolIds: [tool.toolId] })}
                             type="button"
                           >
-                            <ShieldCheck size={13} />
+                            <Check size={13} />
                           </button>
-                        ) : null}
-                      </span>
-                    ) : null}
+                          {toolApprovalState.canApproveAllLevel1 ? (
+                            <button
+                              aria-label="Approve all Level 1 read-only tools"
+                              onClick={() => approvePendingTools({ approveAllLevel1: true })}
+                              type="button"
+                            >
+                              <ShieldCheck size={13} />
+                            </button>
+                          ) : null}
+                        </span>
+                      ) : null}
+                    </div>
                   </div>
-                </div>
-              ))
+                );
+              })
             )}
           </div>
         </GlassPanel>

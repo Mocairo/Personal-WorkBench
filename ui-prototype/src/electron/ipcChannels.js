@@ -97,6 +97,12 @@ export const IPC_METHODS = [
     channel: "knowledge:getKnowledgeBase",
   },
   {
+    namespace: "kb",
+    method: "getDocumentImage",
+    providerMethod: "getKnowledgeDocumentImage",
+    channel: "kb:getDocumentImage",
+  },
+  {
     namespace: "agentManagement",
     method: "getAgentManagement",
     providerMethod: "getAgentManagement",

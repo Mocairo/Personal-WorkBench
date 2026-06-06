@@ -168,6 +168,10 @@ export async function getKnowledgeDocumentPreview(documentId) {
   return callRuntimeMethod("kb", "getDocumentPreview", documentId);
 }
 
+export async function getKnowledgeDocumentImage(input) {
+  return callRuntimeMethod("kb", "getDocumentImage", input);
+}
+
 export async function listCodeRepositories() {
   return callRuntimeMethod("codeRepo", "listRepositories");
 }

@@ -115,6 +115,7 @@ describe("electron IPC handlers", () => {
       "agentChat:knowledgeContext:remove",
       "agentChat:knowledgeContext:clear",
       "knowledge:getKnowledgeBase",
+      "kb:getDocumentImage",
       "agentManagement:getAgentManagement",
       "repository:getCodeRepository",
       "music:getLocalMusic",

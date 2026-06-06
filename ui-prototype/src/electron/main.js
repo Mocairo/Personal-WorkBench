@@ -9,7 +9,7 @@ const DEFAULT_LOCAL_BGE_MODEL_PATH = "D:\\models\\bge-m3";
 const DEFAULT_LOCAL_BGE_PYTHON_PATH = "D:\\Miniconda\\envs\\bge-m3-embed\\python.exe";
 const DEFAULT_LOCAL_BGE_BATCH_SIZE = 64;
 const DEFAULT_LOCAL_BGE_TIMEOUT_MS = 600_000;
-const RENDERER_CSP = "default-src 'self'; script-src 'self'; style-src 'self'; style-src-elem 'self'; style-src-attr 'unsafe-inline'; img-src 'self' data:; font-src 'self' data:; connect-src 'self' http://127.0.0.1:* ws://127.0.0.1:* http://localhost:* ws://localhost:*; object-src 'none'; base-uri 'self'";
+const RENDERER_CSP = "default-src 'self'; script-src 'self'; style-src 'self'; style-src-elem 'self'; style-src-attr 'unsafe-inline'; img-src 'self' data: https:; font-src 'self' data:; connect-src 'self' http://127.0.0.1:* ws://127.0.0.1:* http://localhost:* ws://localhost:*; object-src 'none'; base-uri 'self'";
 
 function registerRendererSecurityHeaders() {
   session.defaultSession.webRequest.onHeadersReceived((details, callback) => {

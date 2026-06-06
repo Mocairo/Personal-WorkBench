@@ -553,6 +553,10 @@ export async function getKnowledgeDocumentPreview(input) {
   };
 }
 
+export async function getKnowledgeDocumentImage() {
+  return { dataUrl: null, status: "unavailable" };
+}
+
 export function getMockAgentManagementData() {
   return {
     agents,

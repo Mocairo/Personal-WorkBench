@@ -434,6 +434,12 @@ export async function restoreAgentChatUserDataSession(input = {}, options = {}) 
     };
   }
 
+  // Save current session to history before overwriting
+  const currentSession = await readJsonFile(getAgentChatUserDataSessionPath(options));
+  if (Array.isArray(currentSession?.chatMessages) && currentSession.chatMessages.length > 0) {
+    await archiveCurrentSession(options);
+  }
+
   const sessionPath = getAgentChatUserDataSessionPath(options);
   const payload = normalizeSession(
     entry.payload,

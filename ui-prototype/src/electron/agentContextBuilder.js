@@ -5,10 +5,10 @@ const WINDOWS_PATH_PATTERN = /\b[A-Za-z]:\\[^\s"']+/g;
 const UNIX_PRIVATE_PATH_PATTERN = /(^|\s)\/(?:Users|home|var|tmp|mnt|Volumes)\/[^\s"']+/g;
 
 const DEFAULT_LIMITS = {
-  maxChars: 6000,
-  maxItems: 8,
-  maxMessages: 6,
-  maxSectionChars: 900,
+  maxChars: 24000,
+  maxItems: 16,
+  maxMessages: 20,
+  maxSectionChars: 3000,
 };
 const MAX_SOURCE_REFS = 6;
 const MAX_SOURCE_REF_PREVIEW_CHARS = 220;
@@ -334,8 +334,7 @@ function systemInstruction(input = {}) {
 
   return [
     `You are the local desktop Agent Chat assistant${agentName ? ` for ${agentName}` : ""}.`,
-    "Use only the bounded, redacted context provided in this request.",
-    "Do not request, plan, or execute tools; approved tool results are already summarized.",
+    "You have access to local tools. Use them when they would help answer the user's question.",
     "Keep answers grounded in session memory, source summaries, and tool summaries.",
     "When using Source References, cite them with [S1], [S2] style markers.",
   ].join(" ");

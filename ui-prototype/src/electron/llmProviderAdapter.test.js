@@ -213,7 +213,6 @@ describe("LLM provider adapter", () => {
     expect(requestBody).toMatchObject({
       model: "gpt-4.1-mini",
       stream: false,
-      tool_choice: "none",
     });
     expect(JSON.stringify(requestBody.messages)).toContain("Summarize the workspace");
     expect(JSON.stringify(requestBody.messages)).toContain("Only local docs are attached.");
@@ -353,7 +352,6 @@ describe("LLM provider adapter", () => {
     expect(requestBody).toMatchObject({
       model: "gpt-4.1-mini",
       stream: true,
-      tool_choice: "none",
     });
     expect(JSON.stringify(events)).not.toMatch(/sk-stream-secret|sk-user-secret|apiKey|Authorization/);
   });

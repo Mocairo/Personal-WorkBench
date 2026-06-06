@@ -1,3 +1,7 @@
 .env
 ui-prototype/node_modules
 .superpowers
+diagrams
+docs
+codex-prompts
+ui-prototype\docs

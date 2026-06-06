@@ -23,7 +23,7 @@ const STREAM_OPENAI_KEY_PATTERN = /\bsk-[A-Za-z0-9_-]+/g;
 const STREAM_WINDOWS_PATH_PATTERN = /\b[A-Za-z]:\\[^\s"']+/g;
 const PROMPT_SECRET_ASSIGNMENT_PATTERN = /\b(api[_-]?key|token|secret|password)\s*[:=]\s*[^\s,;]+/gi;
 const PROMPT_AUTHORIZATION_PATTERN = /\bAuthorization:\s*Bearer\s+[^\s,;]+/gi;
-const VALID_MESSAGE_ROLES = new Set(["assistant", "system", "user"]);
+const VALID_MESSAGE_ROLES = new Set(["assistant", "system", "user", "tool"]);
 
 function getProviderInputs(options = {}) {
   return Array.isArray(options.providers) && options.providers.length > 0
@@ -116,8 +116,8 @@ function buildTextMessages(input = {}) {
     {
       content: [
         "You are the local desktop Agent Chat assistant.",
-        "Use only the user message and Context Pack summary below.",
-        "Do not request, plan, or execute tools.",
+        "Use the user message and Context Pack summary below.",
+        "You have access to local tools. Use them when they would help answer the question.",
       ].join(" "),
       role: "system",
     },
@@ -132,14 +132,25 @@ function normalizePrebuiltMessage(message = {}) {
   const role = cleanString(message.role);
   const content = redactPromptText(cleanString(message.content ?? message.text));
 
-  if (!VALID_MESSAGE_ROLES.has(role) || !content) {
+  if (!VALID_MESSAGE_ROLES.has(role)) {
     return null;
   }
 
-  return {
-    content,
-    role,
-  };
+  if (role === "tool") {
+    const toolCallId = cleanString(message.tool_call_id);
+    if (!toolCallId) return null;
+    return { content: content || "(no result)", role: "tool", tool_call_id: toolCallId };
+  }
+
+  if (role === "assistant" && Array.isArray(message.tool_calls) && message.tool_calls.length > 0) {
+    return { content: content || null, role: "assistant", tool_calls: message.tool_calls };
+  }
+
+  if (!content) {
+    return null;
+  }
+
+  return { content, role };
 }
 
 function resolveTextMessages(input = {}) {
@@ -352,13 +363,19 @@ export async function sendLlmTextMessage(input = {}, options = {}) {
   }
 
   try {
+    const requestBody = {
+      messages: resolveTextMessages(input),
+      model: config.model,
+      stream: false,
+    };
+    const tools = input.tools || options.tools;
+    if (Array.isArray(tools) && tools.length > 0) {
+      requestBody.tools = tools;
+      requestBody.tool_choice = input.tool_choice || options.tool_choice || "auto";
+    }
+
     const response = await transport(`${config.baseUrl}/chat/completions`, {
-      body: JSON.stringify({
-        messages: resolveTextMessages(input),
-        model: config.model,
-        stream: false,
-        tool_choice: "none",
-      }),
+      body: JSON.stringify(requestBody),
       headers: {
         Authorization: `Bearer ${config.apiKey}`,
         "Content-Type": "application/json",
@@ -377,6 +394,32 @@ export async function sendLlmTextMessage(input = {}, options = {}) {
     }
 
     const text = extractResponseText(payload);
+    const finishReason = cleanString(payload.choices?.[0]?.finish_reason);
+    const responseToolCalls = payload.choices?.[0]?.message?.tool_calls;
+
+    if (Array.isArray(responseToolCalls) && responseToolCalls.length > 0 && finishReason === "tool_calls") {
+      return ok({
+        finishReason: "tool_calls",
+        metadata: {
+          completionId: redactSecretText(payload.id),
+          finishReason: "tool_calls",
+          model: redactSecretText(payload.model ?? config.model),
+          provider: redactSecretText(config.provider),
+          toolCalls: responseToolCalls.length,
+          usage: payload.usage
+            ? {
+                completionTokens: payload.usage.completion_tokens,
+                promptTokens: payload.usage.prompt_tokens,
+                totalTokens: payload.usage.total_tokens,
+              }
+            : null,
+        },
+        role: "assistant",
+        text: text || null,
+        toolCalls: responseToolCalls,
+      });
+    }
+
     if (!text) {
       return fail({
         code: "LLM_EMPTY_RESPONSE",
@@ -427,6 +470,7 @@ export async function streamLlmTextMessage(input = {}, options = {}) {
   let text = "";
   let finishReason = "";
   let latestPayload = null;
+  let toolCallBuffers = [];
 
   const metadata = () => buildStreamMetadata({
     config,
@@ -442,13 +486,19 @@ export async function streamLlmTextMessage(input = {}, options = {}) {
   });
 
   try {
+    const requestBody = {
+      messages: resolveTextMessages(input),
+      model: config.model,
+      stream: true,
+    };
+    const tools = input.tools || options.tools;
+    if (Array.isArray(tools) && tools.length > 0) {
+      requestBody.tools = tools;
+      requestBody.tool_choice = input.tool_choice || options.tool_choice || "auto";
+    }
+
     const response = await transport(`${config.baseUrl}/chat/completions`, {
-      body: JSON.stringify({
-        messages: resolveTextMessages(input),
-        model: config.model,
-        stream: true,
-        tool_choice: "none",
-      }),
+      body: JSON.stringify(requestBody),
       headers: {
         Authorization: `Bearer ${config.apiKey}`,
         "Content-Type": "application/json",
@@ -509,6 +559,19 @@ export async function streamLlmTextMessage(input = {}, options = {}) {
           });
         }
 
+        const deltaToolCalls = payload.choices?.[0]?.delta?.tool_calls;
+        if (Array.isArray(deltaToolCalls)) {
+          for (const tc of deltaToolCalls) {
+            const index = tc.index ?? 0;
+            if (!toolCallBuffers[index]) {
+              toolCallBuffers[index] = { id: "", function: { name: "", arguments: "" } };
+            }
+            if (tc.id) toolCallBuffers[index].id = tc.id;
+            if (tc.function?.name) toolCallBuffers[index].function.name += tc.function.name;
+            if (tc.function?.arguments) toolCallBuffers[index].function.arguments += tc.function.arguments;
+          }
+        }
+
         if (options.abortSignal?.aborted) {
           emitStreamEvent(options.onEvent, {
             metadata: metadata(),
@@ -556,6 +619,29 @@ export async function streamLlmTextMessage(input = {}, options = {}) {
         role: "assistant",
         status: "cancelled",
         text,
+      });
+    }
+
+    const hasToolCalls = finishReason === "tool_calls" && toolCallBuffers.length > 0;
+    if (hasToolCalls) {
+      const toolCalls = toolCallBuffers.map((tc) => ({
+        id: tc.id || `tc-${Date.now()}`,
+        type: "function",
+        function: { name: tc.function.name, arguments: tc.function.arguments },
+      }));
+      emitStreamEvent(options.onEvent, {
+        metadata: { ...metadata(), toolCalls: toolCalls.length },
+        requestId,
+        status: "done",
+        text,
+        type: "done",
+      });
+      return ok({
+        finishReason: "tool_calls",
+        metadata: { ...metadata(), toolCalls: toolCalls.length },
+        role: "assistant",
+        text: text || null,
+        toolCalls,
       });
     }
 

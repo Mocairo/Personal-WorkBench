@@ -209,9 +209,11 @@ function noArgs() {
 
 export const AGENT_TOOL_REGISTRY = [
   {
+    description: "Search local knowledge base for relevant documents and passages",
     label: "Knowledge Search",
     maxResultChars: 900,
     maxResultItems: 5,
+    parameters: { type: "object", properties: { query: { type: "string", description: "The search query text" } }, required: ["query"] },
     permissionLevel: 1,
     providerMethod: "searchKnowledgeLocal",
     toolId: "kb.searchLocal",
@@ -221,9 +223,11 @@ export const AGENT_TOOL_REGISTRY = [
     },
   },
   {
+    description: "Preview a knowledge base document by its ID",
     label: "Knowledge Document Preview",
     maxResultChars: 900,
     maxResultItems: 1,
+    parameters: { type: "object", properties: { documentId: { type: "string", description: "The document ID to preview" } }, required: ["documentId"] },
     permissionLevel: 1,
     providerMethod: "getKnowledgeDocumentPreview",
     toolId: "kb.getDocumentPreview",
@@ -233,9 +237,11 @@ export const AGENT_TOOL_REGISTRY = [
     },
   },
   {
+    description: "List all files in the code repository",
     label: "Repository Files",
     maxResultChars: 900,
     maxResultItems: 8,
+    parameters: { type: "object", properties: {}, required: [] },
     permissionLevel: 1,
     providerMethod: "listCodeRepositoryFiles",
     toolId: "codeRepo.listFiles",
@@ -245,9 +251,11 @@ export const AGENT_TOOL_REGISTRY = [
     },
   },
   {
+    description: "Get a summary of recent git changes, branches, and status",
     label: "Git Summary",
     maxResultChars: 600,
     maxResultItems: 3,
+    parameters: { type: "object", properties: {}, required: [] },
     permissionLevel: 1,
     providerMethod: "getCodeGitSummary",
     toolId: "codeRepo.getGitSummary",
@@ -257,9 +265,11 @@ export const AGENT_TOOL_REGISTRY = [
     },
   },
   {
+    description: "Get code repository metrics like file counts, module counts, and symbol counts",
     label: "Repository Metrics",
     maxResultChars: 600,
     maxResultItems: 5,
+    parameters: { type: "object", properties: {}, required: [] },
     permissionLevel: 1,
     providerMethod: "getCodeRepositoryMetrics",
     toolId: "codeRepo.getMetrics",
@@ -269,9 +279,11 @@ export const AGENT_TOOL_REGISTRY = [
     },
   },
   {
+    description: "List available intelligence reports",
     label: "Intel Reports",
     maxResultChars: 900,
     maxResultItems: 5,
+    parameters: { type: "object", properties: {}, required: [] },
     permissionLevel: 1,
     providerMethod: "listIntelReports",
     toolId: "intel.listReports",
@@ -281,9 +293,11 @@ export const AGENT_TOOL_REGISTRY = [
     },
   },
   {
+    description: "List intelligence system logs",
     label: "Intel Logs",
     maxResultChars: 900,
     maxResultItems: 5,
+    parameters: { type: "object", properties: {}, required: [] },
     permissionLevel: 1,
     providerMethod: "listIntelLogs",
     toolId: "intel.listLogs",
@@ -293,9 +307,11 @@ export const AGENT_TOOL_REGISTRY = [
     },
   },
   {
+    description: "List all configured agents in the workspace",
     label: "Agent List",
     maxResultChars: 900,
     maxResultItems: 6,
+    parameters: { type: "object", properties: {}, required: [] },
     permissionLevel: 1,
     providerMethod: "listAgents",
     toolId: "agent.listAgents",
@@ -305,9 +321,11 @@ export const AGENT_TOOL_REGISTRY = [
     },
   },
   {
+    description: "List agent chat sessions and their summaries",
     label: "Agent Sessions",
     maxResultChars: 700,
     maxResultItems: 5,
+    parameters: { type: "object", properties: {}, required: [] },
     permissionLevel: 1,
     providerMethod: "listAgentSessions",
     toolId: "agent.listSessions",
@@ -330,6 +348,17 @@ const TOOL_ALIASES = new Map([
 ]);
 
 const TOOL_MAP = new Map(AGENT_TOOL_REGISTRY.map((tool) => [tool.toolId, tool]));
+
+export function getToolsForOpenAI() {
+  return AGENT_TOOL_REGISTRY.map((tool) => ({
+    type: "function",
+    function: {
+      name: tool.toolId.replace(/\./g, "_"),
+      description: tool.description || tool.label,
+      parameters: tool.parameters || { type: "object", properties: {}, required: [] },
+    },
+  }));
+}
 
 export function redactAgentToolText(value) {
   const text = cleanString(value);

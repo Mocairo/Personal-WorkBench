@@ -1,4 +1,5 @@
 import React, { useMemo, useRef, useState } from "react";
+import parseHtml, { domToReact } from "html-react-parser";
 import { BookOpen, Database, FileText, Folder, Paperclip, Plus, RefreshCcw, Search } from "lucide-react";
 import { EmptyState } from "../components/ui/EmptyState";
 import { GlassPanel } from "../components/ui/GlassPanel";
@@ -359,17 +360,71 @@ function getInspectorRows(file = {}) {
   ].filter((row) => row.value !== undefined && row.value !== null && row.value !== "");
 }
 
-function renderMarkdownInline(text = "") {
+function hasHtmlTags(text) {
+  return /<[a-zA-Z][\s\S]*?>/.test(text);
+}
+
+function renderMarkdownInline(text = "", imageMap = null) {
+  if (!text) return text;
+
+  // If text contains HTML tags, parse them with html-react-parser
+  if (hasHtmlTags(text)) {
+    try {
+      return parseHtml(text, {
+        replace: (domNode) => {
+          if (domNode.type === "tag" && domNode.name === "img") {
+            const src = domNode.attribs?.src || "";
+            const alt = domNode.attribs?.alt || "";
+            const width = domNode.attribs?.width;
+            const dataUrl = imageMap?.[src] ?? null;
+            const resolvedSrc = dataUrl || src;
+            return (
+              <img
+                src={resolvedSrc}
+                alt={alt}
+                loading="lazy"
+                style={width ? { width } : undefined}
+              />
+            );
+          }
+          return undefined;
+        },
+      });
+    } catch {
+      // fallback to plain text
+    }
+  }
+
+  // Pure markdown inline parsing
   const parts = [];
-  const pattern = /\*\*([^*\n]+)\*\*/g;
+  const pattern = /!\[([^\]]*)\]\(([^)]+)\)|\*\*([^*\n]+)\*\*|`([^`]+)`/g;
   let cursor = 0;
   let match;
+  let keyIndex = 0;
 
   while ((match = pattern.exec(text)) !== null) {
     if (match.index > cursor) {
       parts.push(text.slice(cursor, match.index));
     }
-    parts.push(<strong key={`strong-${match.index}`}>{match[1]}</strong>);
+
+    if (match[1] !== undefined || match[2] !== undefined) {
+      const alt = match[1] || "";
+      const imgPath = match[2];
+      const dataUrl = imageMap?.[imgPath] ?? null;
+      parts.push(
+        <span key={`img-${keyIndex++}`} className="kb-inline-image">
+          {dataUrl
+            ? <img src={dataUrl} alt={alt} loading="lazy" />
+            : <span className="kb-image-placeholder">[{alt || imgPath}]</span>
+          }
+        </span>,
+      );
+    } else if (match[3] !== undefined) {
+      parts.push(<strong key={`strong-${keyIndex++}`}>{match[3]}</strong>);
+    } else if (match[4] !== undefined) {
+      parts.push(<code key={`code-${keyIndex++}`}>{match[4]}</code>);
+    }
+
     cursor = match.index + match[0].length;
   }
 
@@ -380,7 +435,7 @@ function renderMarkdownInline(text = "") {
   return parts.length > 0 ? parts : text;
 }
 
-function renderMarkdownBlock(block, index) {
+function renderMarkdownBlock(block, index, imageMap = null) {
   const lines = block.split(/\n/).map((line) => line.trim()).filter(Boolean);
   const heading = lines[0]?.match(/^(#{1,3})\s+(.+)/);
 
@@ -390,9 +445,30 @@ function renderMarkdownBlock(block, index) {
 
     return (
       <React.Fragment key={`heading-${index}`}>
-        <Tag>{renderMarkdownInline(heading[2])}</Tag>
-        {rest ? renderMarkdownBlock(rest, `${index}-rest`) : null}
+        <Tag>{renderMarkdownInline(heading[2], imageMap)}</Tag>
+        {rest ? renderMarkdownBlock(rest, `${index}-rest`, imageMap) : null}
       </React.Fragment>
+    );
+  }
+
+  // Block is primarily HTML (e.g. <div> with <img>)
+  if (hasHtmlTags(block)) {
+    return <div key={`html-${index}`}>{renderMarkdownInline(block, imageMap)}</div>;
+  }
+
+  // Standalone image on its own line: ![alt](path)
+  const standaloneImage = lines.length === 1 && lines[0].match(/^!\[([^\]]*)\]\(([^)]+)\)$/);
+  if (standaloneImage) {
+    const alt = standaloneImage[1] || "";
+    const imgPath = standaloneImage[2];
+    const dataUrl = imageMap?.[imgPath] ?? null;
+    return (
+      <div key={`img-block-${index}`} className="kb-block-image">
+        {dataUrl
+          ? <img src={dataUrl} alt={alt} loading="lazy" />
+          : <span className="kb-image-placeholder">[{alt || imgPath}]</span>
+        }
+      </div>
     );
   }
 
@@ -400,17 +476,86 @@ function renderMarkdownBlock(block, index) {
     return (
       <ul key={`list-${index}`}>
         {lines.map((line) => line.replace(/^[-*]\s+/, "")).map((line) => (
-          <li key={line}>{renderMarkdownInline(line)}</li>
+          <li key={line}>{renderMarkdownInline(line, imageMap)}</li>
         ))}
       </ul>
     );
   }
 
-  return <p key={`p-${index}`}>{renderMarkdownInline(block)}</p>;
+  return <p key={`p-${index}`}>{renderMarkdownInline(block, imageMap)}</p>;
 }
 
-export function MarkdownBlocks({ content }) {
-  const blocks = content.split(/\n{2,}/).map((block) => block.trim()).filter(Boolean);
+function splitIntoBlocks(content) {
+  const codeBlocks = [];
+  const processed = content.replace(/```(\w*)\n?([\s\S]*?)```/g, (_match, lang, code) => {
+    const index = codeBlocks.length;
+    codeBlocks.push({ language: lang, code: code.replace(/\n$/, "") });
+    return `\n\n__CODE_BLOCK_${index}__\n\n`;
+  });
+
+  const rawBlocks = processed.split(/\n{2,}/).map((b) => b.trim()).filter(Boolean);
+
+  return rawBlocks.map((block) => {
+    const m = block.match(/^__CODE_BLOCK_(\d+)__$/);
+    if (m) return codeBlocks[parseInt(m[1])];
+    return block;
+  });
+}
+
+function extractImagePaths(content) {
+  const paths = [];
+  // HTML img tags
+  const htmlPattern = /<img[^>]+src="([^"]+)"/g;
+  let match;
+  while ((match = htmlPattern.exec(content)) !== null) {
+    const src = match[1];
+    if (src && !src.startsWith("http") && !src.startsWith("data:")) {
+      paths.push(src);
+    }
+  }
+  // Markdown images
+  const mdPattern = /!\[[^\]]*\]\(([^)]+)\)/g;
+  while ((match = mdPattern.exec(content)) !== null) {
+    const src = match[1];
+    if (src && !src.startsWith("http") && !src.startsWith("data:")) {
+      paths.push(src);
+    }
+  }
+  return [...new Set(paths)];
+}
+
+export function MarkdownBlocks({ content, documentDir }) {
+  const [imageMap, setImageMap] = React.useState(null);
+  const blocks = splitIntoBlocks(content);
+
+  React.useEffect(() => {
+    if (!documentDir) return;
+    const imagePaths = extractImagePaths(content);
+    if (imagePaths.length === 0) return;
+
+    let cancelled = false;
+    const loadImages = async () => {
+      const map = {};
+      await Promise.all(imagePaths.map(async (imgPath) => {
+        const resolvedPath = documentDir
+          ? `${documentDir}/${imgPath}`.replace(/\\/g, "/").replace(/\/+/g, "/")
+          : imgPath;
+        try {
+          const result = await dataProvider.getKnowledgeDocumentImage({ relativePath: resolvedPath });
+          if (!cancelled && result?.dataUrl) {
+            map[imgPath] = result.dataUrl;
+          }
+        } catch {
+          // image not found, leave as placeholder
+        }
+      }));
+      if (!cancelled && Object.keys(map).length > 0) {
+        setImageMap(map);
+      }
+    };
+    loadImages();
+    return () => { cancelled = true; };
+  }, [content, documentDir]);
 
   return (
     <div className="kb-markdown">
@@ -418,7 +563,16 @@ export function MarkdownBlocks({ content }) {
         <p>No readable content.</p>
       ) : (
         blocks.map((block, index) => {
-          return renderMarkdownBlock(block, index);
+          if (typeof block === "object" && block.code !== undefined) {
+            return (
+              <pre key={`code-${index}`}>
+                <code className={block.language ? `language-${block.language}` : ""}>
+                  {block.code}
+                </code>
+              </pre>
+            );
+          }
+          return renderMarkdownBlock(block, index, imageMap);
         })
       )}
     </div>
@@ -662,7 +816,10 @@ export function KnowledgeBase() {
                 ) : currentFile.readable === false ? (
                   <EmptyState title="Preview unavailable" detail={currentFile.message ?? "This file is available as metadata only."} />
                 ) : readerView.renderAsMarkdown ? (
-                  <MarkdownBlocks content={readerView.content} />
+                  <MarkdownBlocks
+                    content={readerView.content}
+                    documentDir={currentFile?.relativePath ? currentFile.relativePath.replace(/[\\/][^\\/]+$/, "") : ""}
+                  />
                 ) : (
                   <pre>{readerView.content || "No readable content."}</pre>
                 )}
