@@ -2,11 +2,12 @@ import fs from "node:fs/promises";
 import path from "node:path";
 
 const DEFAULT_SESSION_FILE = "agent-chat-session.json";
-const SECRET_ASSIGNMENT_PATTERN = /\b(api[_-]?key|token|secret|password)\s*=\s*[^\s,;]+/gi;
+const DEFAULT_HISTORY_FILE = "agent-chat-history.json";
+const SECRET_ASSIGNMENT_PATTERN = /\b(api[_-]?key|token|secret|password)\s*[:=]\s*[^\s,;]+/gi;
 const AUTHORIZATION_PATTERN = /\bAuthorization:\s*Bearer\s+[^\s,;]+/gi;
 const OPENAI_KEY_PATTERN = /\bsk-[A-Za-z0-9_-]+/g;
 const WINDOWS_PATH_PATTERN = /\b[A-Za-z]:\\[^\s"']+/g;
-const SAFE_METADATA_KEYS = new Set(["completionId", "finishReason", "model", "provider", "toolCalls", "usage"]);
+const SAFE_METADATA_KEYS = new Set(["citations", "completionId", "finishReason", "model", "provider", "toolCalls", "usage"]);
 const MAX_PERSISTED_TEXT = 360;
 
 function cleanString(value) {
@@ -22,6 +23,11 @@ export function getAgentChatUserDataSessionPath(options = {}) {
   return path.join(userDataDir, "sessions", DEFAULT_SESSION_FILE);
 }
 
+export function getAgentChatUserDataHistoryPath(options = {}) {
+  const userDataDir = cleanString(options.userDataDir) || path.resolve(".");
+  return path.join(userDataDir, "sessions", DEFAULT_HISTORY_FILE);
+}
+
 function redactPersistedText(value) {
   const text = cleanString(value);
   if (!text) {
@@ -35,7 +41,44 @@ function redactPersistedText(value) {
     .replace(WINDOWS_PATH_PATTERN, "[redacted-path]");
 }
 
-function sanitizeMetadata(metadata = {}) {
+function limitPersistedText(value, maxLength = MAX_PERSISTED_TEXT) {
+  const text = redactPersistedText(value);
+  if (text.length <= maxLength) {
+    return text;
+  }
+
+  return `${text.slice(0, Math.max(0, maxLength - 3))}...`;
+}
+
+function sanitizeSourceRefs(sourceRefs = []) {
+  return (Array.isArray(sourceRefs) ? sourceRefs : []).slice(0, 8).map((ref, index) => {
+    if (!ref || typeof ref !== "object") {
+      return null;
+    }
+
+    const title = limitPersistedText(ref.title ?? ref.label ?? ref.relativePath, 160);
+    const preview = limitPersistedText(ref.preview ?? ref.excerpt ?? ref.summary, 240);
+    const relativePath = limitPersistedText(ref.relativePath ?? ref.path, 220);
+
+    if (!title && !preview && !relativePath) {
+      return null;
+    }
+
+    return {
+      ...(cleanString(ref.chunkId) ? { chunkId: limitPersistedText(ref.chunkId, 120) } : {}),
+      ...(cleanString(ref.documentId) ? { documentId: limitPersistedText(ref.documentId, 120) } : {}),
+      ...(cleanString(ref.matchType) ? { matchType: limitPersistedText(ref.matchType, 80) } : {}),
+      ...(preview ? { preview } : {}),
+      ...(relativePath ? { relativePath } : {}),
+      ...(Number.isFinite(ref.score) ? { score: ref.score } : {}),
+      sourceRefId: limitPersistedText(ref.sourceRefId, 40) || `S${index + 1}`,
+      sourceType: limitPersistedText(ref.sourceType ?? ref.type ?? ref.source, 80) || "knowledge",
+      title: title || relativePath || `Source ${index + 1}`,
+    };
+  }).filter(Boolean);
+}
+
+function sanitizeMetadata(metadata = {}, options = {}) {
   if (!metadata || typeof metadata !== "object") {
     return null;
   }
@@ -43,6 +86,17 @@ function sanitizeMetadata(metadata = {}) {
   const sanitized = {};
   for (const [key, value] of Object.entries(metadata)) {
     if (!SAFE_METADATA_KEYS.has(key)) {
+      continue;
+    }
+
+    if (key === "citations") {
+      if (!options.allowCitations) {
+        continue;
+      }
+      const citations = sanitizeSourceRefs(value);
+      if (citations.length > 0) {
+        sanitized.citations = citations;
+      }
       continue;
     }
 
@@ -66,15 +120,6 @@ function sanitizeMetadata(metadata = {}) {
   return Object.keys(sanitized).length > 0 ? sanitized : null;
 }
 
-function limitPersistedText(value, maxLength = MAX_PERSISTED_TEXT) {
-  const text = redactPersistedText(value);
-  if (text.length <= maxLength) {
-    return text;
-  }
-
-  return `${text.slice(0, Math.max(0, maxLength - 3))}...`;
-}
-
 function sanitizeMessage(message = {}, fallbackRole = "assistant", createdAt = "") {
   const text = redactPersistedText(message.text ?? message.content ?? message.message);
   if (!text) {
@@ -82,7 +127,7 @@ function sanitizeMessage(message = {}, fallbackRole = "assistant", createdAt = "
   }
 
   const role = message.role === "user" ? "user" : fallbackRole;
-  const metadata = sanitizeMetadata(message.metadata);
+  const metadata = sanitizeMetadata(message.metadata, { allowCitations: true });
 
   return {
     createdAt,
@@ -198,6 +243,7 @@ function sanitizeContextSummary(summary = {}) {
   const contextSummary = {
     ...(limits ? { limits } : {}),
     ...(providerMetadata ? { providerMetadata } : {}),
+    sourceRefs: sanitizeSourceRefs(summary.sourceRefs),
     ...(trimmed ? { trimmed } : {}),
     usedContextItems: sanitizeContextSummaryItems(summary.usedContextItems),
     usedHistoryCount: numberOrZero(summary.usedHistoryCount),
@@ -218,6 +264,106 @@ async function readJsonFile(filePath) {
       sessionPath: filePath,
     };
   }
+}
+
+async function readHistoryFile(options = {}) {
+  const historyPath = getAgentChatUserDataHistoryPath(options);
+  const result = await readJsonFile(historyPath);
+  if (!result.ok) {
+    return { historyPath, sessions: [] };
+  }
+
+  return {
+    historyPath,
+    sessions: Array.isArray(result.data.sessions) ? result.data.sessions : [],
+  };
+}
+
+function historySummary(entry = {}) {
+  return {
+    lastUpdated: limitPersistedText(entry.lastUpdated, 80),
+    messageCount: numberOrZero(entry.messageCount),
+    preview: limitPersistedText(entry.preview, 180),
+    sessionId: limitPersistedText(entry.sessionId, 120),
+    title: limitPersistedText(entry.title, 120) || "Previous chat",
+  };
+}
+
+function getHistorySessionId(session = {}, lastUpdated = "", archivedAt = "") {
+  const activeSessionId = cleanString(session.session?.id ?? session.session?.sessionId);
+  if (activeSessionId && !["agent-chat-session", "local-session"].includes(activeSessionId)) {
+    return activeSessionId;
+  }
+
+  const timestamp = Date.parse(cleanString(archivedAt) || lastUpdated);
+  return `history-${Number.isFinite(timestamp) ? timestamp : Date.now()}`;
+}
+
+function buildHistoryEntry(session = {}, now = "") {
+  const chatMessages = Array.isArray(session.chatMessages)
+    ? session.chatMessages.map((message) => sanitizeMessage(message, message.role, cleanString(message.createdAt) || now)).filter(Boolean)
+    : [];
+  if (chatMessages.length === 0) {
+    return null;
+  }
+
+  const lastUpdated = cleanString(session.lastUpdated ?? session.session?.lastUpdated) || nowIso({ now });
+  const firstUser = chatMessages.find((message) => message.role === "user");
+  const lastAssistant = [...chatMessages].reverse().find((message) => message.role === "assistant");
+  const sessionId = getHistorySessionId(session, lastUpdated, now);
+  const payload = normalizeSession(
+    {
+      ...session,
+      session: {
+        ...(session.session ?? {}),
+        id: sessionId,
+        title: limitPersistedText(firstUser?.text ?? session.session?.title, 120) || "Previous chat",
+      },
+    },
+    chatMessages,
+    lastUpdated,
+    {
+      contextSummary: session.contextSummary,
+      providerMetadata: session.providerMetadata,
+      toolCalls: session.toolCalls,
+      toolDecisions: session.toolDecisions,
+      toolPlan: session.toolPlan,
+      toolResultsSummary: session.toolResultsSummary,
+    },
+  );
+
+  return {
+    lastUpdated,
+    messageCount: chatMessages.length,
+    payload,
+    preview: limitPersistedText(lastAssistant?.text ?? firstUser?.text, 180),
+    sessionId,
+    title: payload.session.title,
+  };
+}
+
+async function archiveCurrentSession(options = {}) {
+  const sessionPath = getAgentChatUserDataSessionPath(options);
+  const current = await readJsonFile(sessionPath);
+  if (!current.ok) {
+    return [];
+  }
+
+  const entry = buildHistoryEntry(current.data, nowIso(options));
+  if (!entry) {
+    return [];
+  }
+
+  const history = await readHistoryFile(options);
+  const sessions = [
+    entry,
+    ...history.sessions.filter((item) => item.sessionId !== entry.sessionId),
+  ].slice(0, 20);
+
+  await fs.mkdir(path.dirname(history.historyPath), { recursive: true });
+  await fs.writeFile(history.historyPath, `${JSON.stringify({ sessions }, null, 2)}\n`);
+
+  return sessions.map(historySummary);
 }
 
 function normalizeSession(session = {}, messages = [], createdAt = "", turn = {}) {
@@ -267,6 +413,52 @@ export async function readAgentChatUserDataSession(options = {}) {
   return readJsonFile(sessionPath);
 }
 
+export async function listAgentChatUserDataSessionHistory(options = {}) {
+  const history = await readHistoryFile(options);
+
+  return {
+    historyPath: history.historyPath,
+    sessions: history.sessions.map(historySummary).filter((session) => session.sessionId),
+    status: "ready",
+  };
+}
+
+export async function restoreAgentChatUserDataSession(input = {}, options = {}) {
+  const sessionId = cleanString(input.sessionId);
+  const history = await readHistoryFile(options);
+  const entry = history.sessions.find((item) => item.sessionId === sessionId);
+  if (!entry?.payload) {
+    return {
+      messageCount: 0,
+      status: "not_found",
+    };
+  }
+
+  const sessionPath = getAgentChatUserDataSessionPath(options);
+  const payload = normalizeSession(
+    entry.payload,
+    Array.isArray(entry.payload.chatMessages) ? entry.payload.chatMessages : [],
+    cleanString(entry.payload.lastUpdated) || nowIso(options),
+    {
+      contextSummary: entry.payload.contextSummary,
+      providerMetadata: entry.payload.providerMetadata,
+      toolCalls: entry.payload.toolCalls,
+      toolDecisions: entry.payload.toolDecisions,
+      toolPlan: entry.payload.toolPlan,
+      toolResultsSummary: entry.payload.toolResultsSummary,
+    },
+  );
+
+  await fs.mkdir(path.dirname(sessionPath), { recursive: true });
+  await fs.writeFile(sessionPath, `${JSON.stringify(payload, null, 2)}\n`);
+
+  return {
+    messageCount: payload.chatMessages.length,
+    sessionPath,
+    status: "restored",
+  };
+}
+
 export async function appendAgentChatSessionTurn(turn = {}, options = {}) {
   const sessionPath = getAgentChatUserDataSessionPath(options);
   const createdAt = cleanString(turn.createdAt) || nowIso(options);
@@ -290,5 +482,35 @@ export async function appendAgentChatSessionTurn(turn = {}, options = {}) {
     messageCount: messages.length,
     sessionPath,
     status: "saved",
+  };
+}
+
+export async function resetAgentChatUserDataSession(options = {}) {
+  const sessionPath = getAgentChatUserDataSessionPath(options);
+  const createdAt = nowIso(options);
+  const history = await archiveCurrentSession(options);
+  const payload = {
+    chatMessages: [],
+    contextItems: [],
+    lastUpdated: createdAt,
+    session: {
+      id: "agent-chat-session",
+      lastUpdated: createdAt,
+      messageCount: 0,
+      source: "userData",
+      status: "ready",
+      title: "Agent Chat Session",
+    },
+    toolCalls: [],
+  };
+
+  await fs.mkdir(path.dirname(sessionPath), { recursive: true });
+  await fs.writeFile(sessionPath, `${JSON.stringify(payload, null, 2)}\n`);
+
+  return {
+    history,
+    messageCount: 0,
+    sessionPath,
+    status: "reset",
   };
 }

@@ -1,0 +1,160 @@
+- main [ref=e3]:
+  - region "Local desktop console prototype" [ref=e4]:
+    - generic [ref=e5]:
+      - generic [ref=e6]:
+        - img [ref=e8]
+        - text: Local Console
+        - text: Home Dashboard
+      - generic "Window controls" [ref=e10]:
+        - button "Minimize" [ref=e11]:
+          - img [ref=e12]
+        - button "Maximize" [ref=e17]:
+          - img [ref=e18]
+        - button "Close" [ref=e23]:
+          - img [ref=e24]
+    - navigation "Global shell controls" [ref=e27]:
+      - button "Home DashboardAlt Q" [ref=e28]:
+        - img [ref=e30]
+        - text: Home DashboardAlt Q
+      - generic [ref=e33]:
+        - generic [ref=e34]: Indexing local sources
+        - generic [ref=e35]: Synced 2m ago
+        - generic [ref=e36]: Mock data bridge
+      - button "Command palette" [ref=e37]:
+        - img [ref=e38]
+      - button "Settings" [ref=e40]:
+        - img [ref=e41]
+    - generic [ref=e45]:
+      - generic [ref=e46]:
+        - generic [ref=e47]:
+          - text: Today
+          - heading "Home Dashboard" [level=1] [ref=e48]
+        - generic [ref=e49]:
+          - button "Task Center" [ref=e50]:
+            - img [ref=e51]
+            - text: Task Center
+          - button "Sync Now" [ref=e54]:
+            - img [ref=e55]
+            - text: Sync Now
+      - generic [ref=e60]:
+        - generic [ref=e61]:
+          - generic [ref=e62]:
+            - text: Active workspace
+            - heading "Local console is shaping today's working context" [level=2] [ref=e63]
+            - paragraph [ref=e64]: Knowledge, code, agents and intel stay connected while the current page keeps focus.
+            - generic [ref=e65]:
+              - generic [ref=e66]:
+                - text: Active context
+                - strong [ref=e67]: 4 modules
+              - generic [ref=e68]:
+                - text: Background work
+                - strong [ref=e69]: 7 jobs
+              - generic [ref=e70]:
+                - text: Local only
+                - strong [ref=e71]: safe
+          - img [ref=e74]
+        - generic [ref=e86]:
+          - generic [ref=e87]:
+            - heading "Today queue" [level=2] [ref=e88]:
+              - img [ref=e89]
+              - text: Today queue
+            - text: 4 open
+          - generic [ref=e92]:
+            - generic [ref=e93]:
+              - img [ref=e95]
+              - generic [ref=e97]:
+                - strong [ref=e98]: 整理 RAG 导入清单
+                - text: Knowledge Base
+              - time [ref=e99]: 09:30
+            - generic [ref=e100]:
+              - img [ref=e102]
+              - generic [ref=e104]:
+                - strong [ref=e105]: 检查 local-intel 采集结果
+                - text: 情报中心
+              - time [ref=e106]: 11:10
+            - generic [ref=e107]:
+              - img [ref=e109]
+              - generic [ref=e111]:
+                - strong [ref=e112]: Review repo scan diff
+                - text: Code Repository
+              - time [ref=e113]: 14:00
+            - generic [ref=e114]:
+              - img [ref=e116]
+              - generic [ref=e118]:
+                - strong [ref=e119]: 同步 Agent tool permissions
+                - text: Agent Management
+              - time [ref=e120]: 16:20
+        - generic [ref=e121]:
+          - generic [ref=e122]:
+            - heading "Sync state" [level=2] [ref=e123]:
+              - img [ref=e124]
+              - text: Sync state
+            - text: local
+          - generic [ref=e127]:
+            - generic [ref=e128]:
+              - text: local-intel
+              - strong [ref=e129]: running
+            - generic [ref=e130]:
+              - text: index
+              - strong [ref=e131]: 2 jobs
+            - generic [ref=e132]:
+              - text: LLM
+              - strong [ref=e133]: ready
+            - generic [ref=e134]:
+              - text: tasks
+              - strong [ref=e135]: 5 active
+          - generic [ref=e136]:
+            - generic [ref=e137]:
+              - text: Knowledge index
+              - strong [ref=e138]: 82%
+            - generic [ref=e139]:
+              - text: Repo scan
+              - strong [ref=e140]: 2 changes
+            - generic [ref=e141]:
+              - text: Intel digest
+              - strong [ref=e142]: 12 new
+        - generic [ref=e143]:
+          - generic [ref=e144]:
+            - heading "Activity stream" [level=2] [ref=e145]:
+              - img [ref=e146]
+              - text: Activity stream
+            - text: last 20 min
+          - generic [ref=e148]:
+            - generic [ref=e149]:
+              - text: Knowledge index finished 1,248 chunks
+              - generic [ref=e150]: 2m ago
+            - generic [ref=e151]:
+              - text: Agent Chat saved a research context
+              - generic [ref=e152]: 3m ago
+            - generic [ref=e153]:
+              - text: Music library scanned 42 new tracks
+              - generic [ref=e154]: 4m ago
+            - generic [ref=e155]:
+              - text: Code Repository detected 2 uncommitted files
+              - generic [ref=e156]: 5m ago
+        - generic [ref=e157]:
+          - heading "Jump points" [level=2] [ref=e159]:
+            - img [ref=e160]
+            - text: Jump points
+          - generic [ref=e162]:
+            - button "Open Chat" [ref=e163]:
+              - img [ref=e164]
+              - text: Chat
+            - button "Open Knowledge" [ref=e166]:
+              - img [ref=e167]
+              - text: Knowledge
+            - button "Open Agents" [ref=e169]:
+              - img [ref=e170]
+              - text: Agents
+            - button "Open Code" [ref=e173]:
+              - img [ref=e174]
+              - text: Code
+            - button "Open Music" [ref=e179]:
+              - img [ref=e180]
+              - text: Music
+            - button "Open Intel" [ref=e183]:
+              - img [ref=e184]
+              - text: Intel
+            - button "Open Widgets" [ref=e190]:
+              - img [ref=e191]
+              - text: Widgets

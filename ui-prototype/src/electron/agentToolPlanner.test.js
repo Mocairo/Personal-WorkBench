@@ -76,4 +76,39 @@ describe("agent tool planner", () => {
       expect.objectContaining({ permissionLevel: 3, state: "denied", toolId: "intel.startService" }),
     ]));
   });
+
+  it("plans a bounded Knowledge search for ordinary Agent Chat questions", () => {
+    const plan = buildAgentToolPlan({
+      userText: "这几篇日记里我最近反复在提什么？",
+    });
+
+    expect(plan).toMatchObject({
+      source: "local-planner",
+      status: "planned",
+    });
+    expect(plan.items[0]).toMatchObject({
+      args: { query: "这几篇日记里我最近反复在提什么？" },
+      permissionLevel: 1,
+      state: "planned",
+      toolId: "kb.searchLocal",
+    });
+  });
+
+  it("derives a Knowledge search query from recent history for short continuation replies", () => {
+    const plan = buildAgentToolPlan({
+      session: {
+        chatMessages: [
+          { role: "user", text: "我的论文模板里都有什么" },
+          { role: "assistant", text: "需要我继续查找论文阅读模板的具体结构吗？" },
+        ],
+      },
+      userText: "需要",
+    });
+
+    expect(plan.items[0]).toMatchObject({
+      args: { query: expect.stringContaining("论文模板") },
+      toolId: "kb.searchLocal",
+    });
+    expect(plan.items[0].args.query).not.toBe("需要");
+  });
 });

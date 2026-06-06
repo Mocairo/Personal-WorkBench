@@ -5,6 +5,7 @@ import { describe, expect, it, vi } from "vitest";
 import {
   getKnowledgeBaseData,
   getKnowledgeDocumentPreview,
+  getKnowledgeFileTree,
   reindexKnowledgeBase,
   searchKnowledgeLocal,
 } from "./knowledgeBaseAdapter";
@@ -27,6 +28,13 @@ async function createKnowledgeFixture() {
   await fs.writeFile(path.join(rootDir, "paper.pdf"), "%PDF-1.4\n");
 
   return rootDir;
+}
+
+function flattenTreeNodes(nodes = []) {
+  return nodes.flatMap((node) => [
+    node,
+    ...flattenTreeNodes(node.children ?? []),
+  ]);
 }
 
 describe("knowledge base adapter", () => {
@@ -128,6 +136,128 @@ describe("knowledge base adapter", () => {
     expect(data.scanSummary.skipped).toBeGreaterThanOrEqual(7);
     expect(JSON.stringify(data)).not.toContain("TOKEN=secret");
     expect(JSON.stringify(data)).not.toContain(rootDir);
+  });
+
+  it("builds a safe Knowledge file tree without ignored folders or absolute paths", async () => {
+    const rootDir = await fs.mkdtemp(path.join(os.tmpdir(), "knowledge-file-tree-"));
+    await fs.mkdir(path.join(rootDir, "notes"), { recursive: true });
+    await fs.mkdir(path.join(rootDir, ".git"), { recursive: true });
+    await fs.mkdir(path.join(rootDir, ".hidden"), { recursive: true });
+    await fs.mkdir(path.join(rootDir, "node_modules", "pkg"), { recursive: true });
+    await fs.mkdir(path.join(rootDir, "dist"), { recursive: true });
+    await fs.mkdir(path.join(rootDir, "build"), { recursive: true });
+    await fs.writeFile(path.join(rootDir, "README.md"), "# Readme\n");
+    await fs.writeFile(path.join(rootDir, "notes", "daily.txt"), "Daily note\n");
+    await fs.writeFile(path.join(rootDir, "data.json"), "{ \"ok\": true }\n");
+    await fs.writeFile(path.join(rootDir, "sheet.csv"), "title,value\nPlan,1\n");
+    await fs.writeFile(path.join(rootDir, "manual.pdf"), "%PDF-1.4\n");
+    await fs.writeFile(path.join(rootDir, "brief.docx"), "PK fake docx\n");
+    await fs.writeFile(path.join(rootDir, ".env"), "TOKEN=sk-hidden\n");
+    await fs.writeFile(path.join(rootDir, ".git", "secret.md"), "# secret\n");
+    await fs.writeFile(path.join(rootDir, ".hidden", "hidden.md"), "# hidden\n");
+    await fs.writeFile(path.join(rootDir, "node_modules", "pkg", "README.md"), "# dependency\n");
+    await fs.writeFile(path.join(rootDir, "dist", "bundle.md"), "# generated\n");
+    await fs.writeFile(path.join(rootDir, "build", "bundle.md"), "# generated\n");
+    await fs.writeFile(path.join(rootDir, "scratch.tmp"), "junk\n");
+    await fs.writeFile(path.join(rootDir, "image.png"), "not a document\n");
+
+    const tree = await getKnowledgeFileTree({ rootDir });
+    const nodes = flattenTreeNodes(tree.root.children);
+    const relativePaths = nodes.map((node) => node.relativePath);
+
+    expect(tree).toMatchObject({
+      root: {
+        children: expect.any(Array),
+        name: "Knowledge Base",
+        relativePath: "",
+        type: "folder",
+      },
+      source: "local",
+      status: "ready",
+    });
+    expect(relativePaths).toEqual(expect.arrayContaining([
+      "README.md",
+      "notes",
+      "notes/daily.txt",
+      "data.json",
+      "sheet.csv",
+      "manual.pdf",
+      "brief.docx",
+    ]));
+    expect(nodes.find((node) => node.relativePath === "README.md")).toMatchObject({
+      ext: "md",
+      readable: true,
+      type: "file",
+    });
+    expect(nodes.find((node) => node.relativePath === "manual.pdf")).toMatchObject({
+      ext: "pdf",
+      readable: false,
+      type: "file",
+    });
+    expect(nodes.find((node) => node.relativePath === "brief.docx")).toMatchObject({
+      ext: "docx",
+      readable: false,
+      type: "file",
+    });
+    expect(relativePaths).not.toEqual(expect.arrayContaining([
+      ".env",
+      ".git/secret.md",
+      ".hidden/hidden.md",
+      "node_modules/pkg/README.md",
+      "dist/bundle.md",
+      "build/bundle.md",
+      "scratch.tmp",
+      "image.png",
+    ]));
+    expect(JSON.stringify(tree)).not.toContain(rootDir);
+  });
+
+  it("loads a safe bounded document reader preview by relative path", async () => {
+    const rootDir = await fs.mkdtemp(path.join(os.tmpdir(), "knowledge-reader-preview-"));
+    await fs.writeFile(
+      path.join(rootDir, "guide.md"),
+      `# Guide\n\nNeedle body apiKey=sk-preview-secret Authorization: Bearer hidden D:\\private\\vault\\guide.md\n\n${"x".repeat(240)}`,
+    );
+    await fs.writeFile(path.join(rootDir, "manual.pdf"), "%PDF-1.4\n");
+    await fs.writeFile(path.join(os.tmpdir(), "outside-knowledge.md"), "# outside\n");
+
+    const preview = await getKnowledgeDocumentPreview({
+      maxContentChars: 140,
+      relativePath: "guide.md",
+      rootDir,
+    });
+
+    expect(preview).toMatchObject({
+      content: expect.stringContaining("# Guide"),
+      id: expect.any(String),
+      readable: true,
+      relativePath: "guide.md",
+      source: "local",
+      status: "ready",
+      title: "guide.md",
+      truncated: true,
+      type: "md",
+    });
+    expect(preview.content.length).toBeLessThanOrEqual(143);
+    expect(JSON.stringify(preview)).not.toMatch(/sk-preview-secret|apiKey|Authorization|Bearer hidden|D:\\private/);
+    expect(JSON.stringify(preview)).not.toContain(rootDir);
+
+    await expect(getKnowledgeDocumentPreview({
+      relativePath: "manual.pdf",
+      rootDir,
+    })).resolves.toMatchObject({
+      readable: false,
+      relativePath: "manual.pdf",
+      status: "metadata-only",
+    });
+
+    await expect(getKnowledgeDocumentPreview({
+      relativePath: "../outside-knowledge.md",
+      rootDir,
+    })).resolves.toMatchObject({
+      readable: false,
+      status: "missing",
+    });
   });
 
   it("searches local text documents by keyword and returns relative result paths", async () => {

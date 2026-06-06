@@ -22,13 +22,6 @@ import { PanelHeader } from "../components/ui/PanelHeader";
 import { useAgentChatData } from "../hooks/usePageData";
 import { dataProvider } from "../services/dataProvider";
 
-const contextMeta = [
-  { active: true, chunks: 18, tokens: "6.2k", type: "doc", updated: "2m" },
-  { active: false, chunks: 7, tokens: "2.1k", type: "spec", updated: "9m" },
-  { active: false, chunks: 12, tokens: "4.8k", type: "code", updated: "14m" },
-  { active: false, chunks: 5, tokens: "1.6k", type: "note", updated: "21m" },
-];
-
 const toolMeta = [
   { duration: "320ms", permission: "read allowed" },
   { duration: "1.2s", permission: "read allowed" },
@@ -53,12 +46,195 @@ function redactDisplayText(value) {
     .replace(DISPLAY_WINDOWS_PATH_PATTERN, "[redacted-path]");
 }
 
-function getContextTitle(item) {
-  if (typeof item === "string") {
-    return redactDisplayText(item);
+function parseInlineMarkdown(text = "") {
+  const source = typeof text === "string" ? text : "";
+  const tokens = [];
+  const pattern = /(`[^`]+`|\*\*[\s\S]+?\*\*|__[\s\S]+?__)/g;
+  let cursor = 0;
+  let match;
+
+  while ((match = pattern.exec(source)) !== null) {
+    if (match.index > cursor) {
+      tokens.push({ text: source.slice(cursor, match.index), type: "text" });
+    }
+
+    const raw = match[0];
+    if (raw.startsWith("`")) {
+      tokens.push({ text: raw.slice(1, -1), type: "code" });
+    } else {
+      tokens.push({ text: raw.slice(2, -2), type: "strong" });
+    }
+    cursor = match.index + raw.length;
   }
 
-  return redactDisplayText(item?.title ?? item?.label ?? item?.relativePath ?? item?.path ?? "Local context");
+  if (cursor < source.length) {
+    tokens.push({ text: source.slice(cursor), type: "text" });
+  }
+
+  return tokens.length > 0 ? tokens : [{ text: source, type: "text" }];
+}
+
+export function parseMarkdownBlocks(value = "") {
+  const text = redactDisplayText(value).replace(/\r\n?/g, "\n");
+  const lines = text.split("\n");
+  const blocks = [];
+  let paragraph = [];
+  let list = null;
+  let codeBlock = null;
+
+  const flushParagraph = () => {
+    if (paragraph.length === 0) {
+      return;
+    }
+    blocks.push({
+      children: parseInlineMarkdown(paragraph.join(" ").trim()),
+      type: "paragraph",
+    });
+    paragraph = [];
+  };
+
+  const flushList = () => {
+    if (!list) {
+      return;
+    }
+    blocks.push(list);
+    list = null;
+  };
+
+  const flushTextBlocks = () => {
+    flushParagraph();
+    flushList();
+  };
+
+  lines.forEach((line) => {
+    const trimmed = line.trim();
+    const fence = trimmed.match(/^```([A-Za-z0-9_-]*)\s*$/);
+
+    if (codeBlock) {
+      if (fence) {
+        blocks.push({
+          language: codeBlock.language,
+          text: codeBlock.lines.join("\n"),
+          type: "code",
+        });
+        codeBlock = null;
+      } else {
+        codeBlock.lines.push(line);
+      }
+      return;
+    }
+
+    if (fence) {
+      flushTextBlocks();
+      codeBlock = {
+        language: fence[1] || "",
+        lines: [],
+      };
+      return;
+    }
+
+    if (!trimmed) {
+      flushTextBlocks();
+      return;
+    }
+
+    const heading = trimmed.match(/^(#{1,6})\s+(.+)$/);
+    if (heading) {
+      flushTextBlocks();
+      blocks.push({
+        children: parseInlineMarkdown(heading[2].trim()),
+        level: heading[1].length,
+        type: "heading",
+      });
+      return;
+    }
+
+    const unordered = trimmed.match(/^[-*]\s+(.+)$/);
+    const ordered = trimmed.match(/^\d+[.)]\s+(.+)$/);
+    if (unordered || ordered) {
+      flushParagraph();
+      const orderedList = Boolean(ordered);
+      if (!list || list.ordered !== orderedList) {
+        flushList();
+        list = {
+          items: [],
+          ordered: orderedList,
+          type: "list",
+        };
+      }
+      list.items.push(parseInlineMarkdown((unordered?.[1] ?? ordered?.[1] ?? "").trim()));
+      return;
+    }
+
+    flushList();
+    paragraph.push(trimmed);
+  });
+
+  if (codeBlock) {
+    blocks.push({
+      language: codeBlock.language,
+      text: codeBlock.lines.join("\n"),
+      type: "code",
+    });
+  }
+  flushTextBlocks();
+
+  return blocks.length > 0 ? blocks : [{ children: [{ text: "", type: "text" }], type: "paragraph" }];
+}
+
+function InlineMarkdown({ tokens = [] }) {
+  return tokens.map((token, index) => {
+    const key = `${token.type}-${index}`;
+    if (token.type === "strong") {
+      return <strong key={key}>{token.text}</strong>;
+    }
+    if (token.type === "code") {
+      return <code key={key}>{token.text}</code>;
+    }
+    return <React.Fragment key={key}>{token.text}</React.Fragment>;
+  });
+}
+
+function MarkdownMessage({ text = "" }) {
+  return (
+    <div className="message-markdown">
+      {parseMarkdownBlocks(text).map((block, index) => {
+        const key = `${block.type}-${index}`;
+        if (block.type === "heading") {
+          const Tag = `h${Math.min(Math.max(block.level, 1), 6)}`;
+          return (
+            <Tag key={key}>
+              <InlineMarkdown tokens={block.children} />
+            </Tag>
+          );
+        }
+        if (block.type === "list") {
+          const Tag = block.ordered ? "ol" : "ul";
+          return (
+            <Tag key={key}>
+              {block.items.map((item, itemIndex) => (
+                <li key={`${key}-${itemIndex}`}>
+                  <InlineMarkdown tokens={item} />
+                </li>
+              ))}
+            </Tag>
+          );
+        }
+        if (block.type === "code") {
+          return (
+            <pre key={key}>
+              <code>{block.text}</code>
+            </pre>
+          );
+        }
+        return (
+          <p key={key}>
+            <InlineMarkdown tokens={block.children} />
+          </p>
+        );
+      })}
+    </div>
+  );
 }
 
 function getContextSummaryRows(contextSummary = null) {
@@ -80,28 +256,52 @@ function getContextSummaryRows(contextSummary = null) {
 
   if (Array.isArray(contextSummary.usedContextItems)) {
     contextSummary.usedContextItems.forEach((item) => {
+      const sourceType = redactDisplayText(item.sourceType ?? item.type ?? "context");
+      if (sourceType !== "session") {
+        return;
+      }
+
       rows.push({
         active: true,
         chunks: 1,
-        title: redactDisplayText(item.title ?? item.label ?? item.sourceType ?? "Context source"),
+        title: "Session context",
         tokens: redactDisplayText(item.status ?? "used"),
-        type: redactDisplayText(item.sourceType ?? item.type ?? "context"),
+        type: "session",
         updated: "context",
       });
     });
   }
 
+  const sourceRefs = Array.isArray(contextSummary.sourceRefs)
+    ? contextSummary.sourceRefs
+    : [];
+  if (sourceRefs.length > 0) {
+    const matchTypes = [...new Set(sourceRefs.map((item) => redactDisplayText(item.matchType ?? "")).filter(Boolean))];
+    rows.push({
+      active: true,
+      chunks: sourceRefs.length,
+      title: "Referenced sources",
+      tokens: sourceRefs.length === 1 ? matchTypes[0] || "source" : `${sourceRefs.length} refs`,
+      type: "knowledge",
+      updated: "current run",
+    });
+  }
+
   if (Array.isArray(contextSummary.usedToolResults)) {
-    contextSummary.usedToolResults.forEach((item) => {
+    const toolResults = contextSummary.usedToolResults.filter(Boolean);
+    if (toolResults.length > 0) {
+      const chunkCount = toolResults.reduce((total, item) => (
+        total + (Number.isFinite(item.itemCount) && item.itemCount > 0 ? item.itemCount : 1)
+      ), 0);
       rows.push({
         active: true,
-        chunks: item.itemCount ?? 1,
-        title: redactDisplayText(item.label ?? item.toolId ?? "Tool result"),
-        tokens: redactDisplayText(item.status ?? "completed"),
+        chunks: chunkCount,
+        title: "Tool results used",
+        tokens: `${toolResults.length} summaries`,
         type: "tool",
         updated: "tool",
       });
-    });
+    }
   }
 
   const trimmed = contextSummary.trimmed && typeof contextSummary.trimmed === "object"
@@ -122,6 +322,54 @@ function getContextSummaryRows(contextSummary = null) {
   return rows;
 }
 
+export function getRecentSessionRows(recentSessions = []) {
+  return (Array.isArray(recentSessions) ? recentSessions : [])
+    .slice(0, 6)
+    .map((item) => {
+      const sessionId = redactDisplayText(item.sessionId ?? item.id);
+      const title = redactDisplayText(item.title ?? "Previous chat");
+
+      if (!sessionId || !title) {
+        return null;
+      }
+
+      return {
+        lastUpdated: redactDisplayText(item.lastUpdated ?? item.updatedAt ?? ""),
+        messageCount: Number.isFinite(item.messageCount) ? item.messageCount : 0,
+        preview: redactDisplayText(item.preview ?? item.summary ?? ""),
+        sessionId,
+        title,
+      };
+    })
+    .filter(Boolean);
+}
+
+export function getMessageCitationChips(message = {}) {
+  const citations = Array.isArray(message.metadata?.citations) ? message.metadata.citations : [];
+
+  return citations.slice(0, 8).map((citation, index) => {
+    const label = redactDisplayText(citation.sourceRefId ?? `S${index + 1}`);
+    const title = redactDisplayText(citation.title ?? citation.relativePath ?? `Source ${index + 1}`);
+    const preview = redactDisplayText(citation.preview ?? "");
+    const updated = redactDisplayText(citation.relativePath ?? citation.updatedAt ?? "");
+
+    if (!title && !preview && !updated) {
+      return null;
+    }
+
+    return {
+      chunkId: redactDisplayText(citation.chunkId ?? ""),
+      documentId: redactDisplayText(citation.documentId ?? ""),
+      label,
+      matchType: redactDisplayText(citation.matchType ?? citation.sourceType ?? "source"),
+      preview,
+      sourceType: redactDisplayText(citation.sourceType ?? "knowledge"),
+      title,
+      updated,
+    };
+  }).filter(Boolean);
+}
+
 function getAttachedContextRows(attachedKnowledgeContexts = []) {
   return (Array.isArray(attachedKnowledgeContexts) ? attachedKnowledgeContexts : []).map((item) => ({
     active: true,
@@ -136,31 +384,10 @@ function getAttachedContextRows(attachedKnowledgeContexts = []) {
 }
 
 export function getContextRows(contextItems = [], contextSummary = null, attachedKnowledgeContexts = []) {
-  const rows = contextItems.map((item, index) => {
-    const fallback = contextMeta[index % contextMeta.length];
-    const title = getContextTitle(item);
-
-    if (typeof item === "string") {
-      return {
-        title,
-        ...fallback,
-      };
-    }
-
-    return {
-      ...fallback,
-      active: item.active ?? fallback.active,
-      chunks: item.chunks ?? item.chunkCount ?? fallback.chunks,
-      title,
-      tokens: item.tokens ?? item.tokenCount ?? fallback.tokens,
-      type: item.type ?? item.kind ?? fallback.type,
-      updated: item.updated ?? item.updatedAt ?? item.time ?? fallback.updated,
-    };
-  });
+  void contextItems;
 
   return [
     ...getAttachedContextRows(attachedKnowledgeContexts),
-    ...rows,
     ...getContextSummaryRows(contextSummary),
   ];
 }
@@ -174,6 +401,18 @@ export function mergeAttachedKnowledgeContextResultIntoChatData(data = {}, resul
     ...data,
     attachedKnowledgeContextCount: Number.isFinite(result.total) ? result.total : attachedKnowledgeContexts.length,
     attachedKnowledgeContexts,
+  };
+}
+
+export function mergeResetAgentChatResultIntoChatData(data = {}, result = {}) {
+  return {
+    ...data,
+    ...result,
+    attachedKnowledgeContextCount: 0,
+    attachedKnowledgeContexts: [],
+    chatMessages: Array.isArray(result.chatMessages) ? result.chatMessages : [],
+    contextItems: Array.isArray(result.contextItems) ? result.contextItems : [],
+    toolCalls: Array.isArray(result.toolCalls) ? result.toolCalls : [],
   };
 }
 
@@ -509,12 +748,14 @@ export function AgentChat() {
   const [dryRunBusy, setDryRunBusy] = useState(false);
   const [activeRequestId, setActiveRequestId] = useState(null);
   const [autoAllowLevel1ReadOnly, setAutoAllowLevel1ReadOnly] = useState(false);
+  const [selectedCitation, setSelectedCitation] = useState(null);
   const displayData = dryRunData ?? data;
-  const { attachedKnowledgeContexts = [], chatMessages, contextItems, toolCalls } = displayData;
+  const { attachedKnowledgeContexts = [], chatMessages, contextItems, recentSessions, toolCalls } = displayData;
   const chatStatus = getChatStatusSummary(displayData);
   const composerState = getComposerSendState(composerText, chatStatus.sendEnabled);
   const contextSummary = displayData.sendResult?.contextSummary ?? displayData.contextSummary;
   const contextRows = getContextRows(contextItems, contextSummary, attachedKnowledgeContexts);
+  const recentRows = getRecentSessionRows(recentSessions);
   const timelineRows = getTimelineRows(toolCalls);
   const toolApprovalState = getToolApprovalState(timelineRows);
 
@@ -678,6 +919,44 @@ export function AgentChat() {
     }
   };
 
+  const resetChatSession = async () => {
+    if (dryRunBusy) {
+      return;
+    }
+
+    try {
+      const result = await dataProvider.resetAgentChatSession({
+        sessionId: displayData.session?.sessionId,
+      });
+      setDryRunData((current) => mergeResetAgentChatResultIntoChatData(current ?? displayData, result));
+      setComposerText("");
+      setSelectedCitation(null);
+      setDryRunStatus("new chat ready");
+    } catch (error) {
+      setDryRunData((current) => mergeSendErrorIntoChatData(current ?? displayData, error));
+      setDryRunStatus(error?.message ?? "new chat unavailable");
+    }
+  };
+
+  const restoreChatSession = async (session) => {
+    if (dryRunBusy || !session?.sessionId) {
+      return;
+    }
+
+    try {
+      const result = await dataProvider.restoreAgentChatSession({
+        sessionId: session.sessionId,
+      });
+      setDryRunData(result);
+      setComposerText("");
+      setSelectedCitation(null);
+      setDryRunStatus(result.status === "restored" ? "history restored" : "history unavailable");
+    } catch (error) {
+      setDryRunData((current) => mergeSendErrorIntoChatData(current ?? displayData, error));
+      setDryRunStatus(error?.message ?? "history unavailable");
+    }
+  };
+
   return (
     <PageFrame
       eyebrow="Agent Runtime"
@@ -692,7 +971,7 @@ export function AgentChat() {
             {contextSummary ? "memory/context used" : "memory local"}
           </span>
           <span className="settings-save-state">{dryRunStatus}</span>
-          <button className="soft-button" type="button">
+          <button className="soft-button" onClick={resetChatSession} type="button">
             <Plus size={15} />
             New Chat
           </button>
@@ -708,7 +987,7 @@ export function AgentChat() {
           <PanelHeader icon={Database} title="Context" aside={`${contextRows.length} linked`} />
           <div className="context-stack">
             {contextRows.length === 0 ? (
-              <EmptyState title="No context loaded" detail="Attach local docs or open a saved session." />
+              <EmptyState title="No active context" detail="Attach local docs or use a source from an answer." />
             ) : (
               contextRows.map((item) => (
                 <div className={`context-item rich ${item.active ? "selected" : ""}`} key={item.title}>
@@ -734,17 +1013,47 @@ export function AgentChat() {
               ))
             )}
           </div>
+          {selectedCitation ? (
+            <div className="source-preview">
+              <strong>[{selectedCitation.label}] {selectedCitation.title}</strong>
+              <small>
+                {selectedCitation.sourceType} / {selectedCitation.matchType}
+                {selectedCitation.updated ? ` / ${selectedCitation.updated}` : ""}
+              </small>
+              {selectedCitation.preview ? <p>{selectedCitation.preview}</p> : null}
+            </div>
+          ) : null}
           {attachedKnowledgeContexts.length > 0 ? (
             <button className="soft-button muted" onClick={clearAttachedContexts} type="button">
               <Trash2 size={14} />
               Clear attached
             </button>
           ) : null}
-          <div className="memory-card">
-            <span>Memory Scope</span>
-            <strong>Local workspace only</strong>
-            <p>Session memory is scoped to local files, local settings and the selected workspace.</p>
-          </div>
+          {recentRows.length > 0 ? (
+            <>
+              <PanelHeader icon={FileText} title="Recent chats" aside={`${recentRows.length} saved`} />
+              <div className="context-stack recent-session-stack">
+                {recentRows.map((item) => (
+                  <button
+                    className="context-item rich recent-chat-item"
+                    key={item.sessionId}
+                    onClick={() => restoreChatSession(item)}
+                    type="button"
+                  >
+                    <FileText size={15} />
+                    <div>
+                      <strong>{item.title}</strong>
+                      <small>
+                        {item.messageCount} messages
+                        {item.preview ? ` / ${item.preview}` : ""}
+                      </small>
+                    </div>
+                    <time>{item.lastUpdated || "saved"}</time>
+                  </button>
+                ))}
+              </div>
+            </>
+          ) : null}
         </GlassPanel>
 
         <GlassPanel className="chat-panel">
@@ -752,16 +1061,36 @@ export function AgentChat() {
             {chatMessages.length === 0 ? (
               <EmptyState title="No chat session" detail="Saved local messages will appear here." />
             ) : (
-              chatMessages.map((message, index) => (
-                <div className={`message ${message.role}`} key={message.id || message.text}>
-                  <span>{message.role === "user" ? "You" : "Agent"}</span>
-                  <p>{message.text}</p>
-                  <div className="message-refs">
-                    <small>{message.role === "user" ? "local session" : `tool ref ${index + 1}`}</small>
-                    <small>{index % 2 === 0 ? "context locked" : "draft"}</small>
+              chatMessages.map((message) => {
+                const citationChips = getMessageCitationChips(message);
+
+                return (
+                  <div className={`message ${message.role}`} key={message.id || message.text}>
+                    <span>{message.role === "user" ? "You" : "Agent"}</span>
+                    <MarkdownMessage text={message.text} />
+                    {citationChips.length > 0 ? (
+                      <div className="citation-chip-row" aria-label="Referenced sources">
+                        <small>Referenced sources</small>
+                        {citationChips.map((citation) => (
+                          <button
+                            key={`${citation.label}-${citation.title}`}
+                            onClick={() => setSelectedCitation(citation)}
+                            title={citation.preview || citation.title}
+                            type="button"
+                          >
+                            <FileText size={12} />
+                            {citation.label}
+                          </button>
+                        ))}
+                      </div>
+                    ) : null}
+                    <div className="message-refs">
+                      <small>{message.role === "user" ? "local session" : redactDisplayText(message.source ?? "llm")}</small>
+                      <small>{redactDisplayText(message.status ?? "ready")}</small>
+                    </div>
                   </div>
-                </div>
-              ))
+                );
+              })
             )}
           </div>
           <form className="composer" onSubmit={sendMessage}>

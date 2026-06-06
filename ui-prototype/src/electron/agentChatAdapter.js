@@ -7,7 +7,10 @@ import {
   buildAgentToolCall,
 } from "../shared/agentContracts.js";
 import { buildProviderStatus } from "../shared/sourceStatus.js";
-import { readAgentChatUserDataSession } from "./agentChatSessionStore.js";
+import {
+  listAgentChatUserDataSessionHistory,
+  readAgentChatUserDataSession,
+} from "./agentChatSessionStore.js";
 
 function toStringValue(value) {
   return typeof value === "string" ? value.trim() : "";
@@ -42,6 +45,28 @@ function sanitizeContextSummaryItem(item = {}) {
   };
 }
 
+function sanitizeSourceRef(ref = {}, index = 0) {
+  const title = redactContextText(toStringValue(ref.title ?? ref.label ?? ref.relativePath));
+  const preview = redactContextText(toStringValue(ref.preview ?? ref.excerpt ?? ref.summary));
+  const relativePath = redactContextText(toStringValue(ref.relativePath ?? ref.path));
+
+  if (!title && !preview && !relativePath) {
+    return null;
+  }
+
+  return {
+    ...(toStringValue(ref.chunkId) ? { chunkId: redactContextText(ref.chunkId) } : {}),
+    ...(toStringValue(ref.documentId) ? { documentId: redactContextText(ref.documentId) } : {}),
+    ...(toStringValue(ref.matchType) ? { matchType: redactContextText(ref.matchType) } : {}),
+    ...(preview ? { preview } : {}),
+    ...(relativePath ? { relativePath } : {}),
+    ...(Number.isFinite(ref.score) ? { score: ref.score } : {}),
+    sourceRefId: redactContextText(toStringValue(ref.sourceRefId)) || `S${index + 1}`,
+    sourceType: redactContextText(toStringValue(ref.sourceType ?? ref.type ?? ref.source)) || "knowledge",
+    title: title || relativePath || `Source ${index + 1}`,
+  };
+}
+
 function sanitizeContextSummary(summary = {}) {
   if (!summary || typeof summary !== "object") {
     return undefined;
@@ -66,6 +91,9 @@ function sanitizeContextSummary(summary = {}) {
         toolId: redactContextText(toStringValue(item.toolId)),
       })).filter((item) => item.label || item.toolId)
     : [];
+  const sourceRefs = Array.isArray(summary.sourceRefs)
+    ? summary.sourceRefs.slice(0, 8).map(sanitizeSourceRef).filter(Boolean)
+    : [];
   const providerMetadata = summary.providerMetadata && typeof summary.providerMetadata === "object"
     ? {
         ...(toStringValue(summary.providerMetadata.completionId) ? { completionId: redactContextText(summary.providerMetadata.completionId) } : {}),
@@ -88,6 +116,7 @@ function sanitizeContextSummary(summary = {}) {
   return {
     ...(trimmed ? { trimmed } : {}),
     ...(providerMetadata && Object.keys(providerMetadata).length > 0 ? { providerMetadata } : {}),
+    sourceRefs,
     usedContextItems,
     usedHistoryCount: Number.isFinite(summary.usedHistoryCount) ? summary.usedHistoryCount : 0,
     usedToolResults,
@@ -177,7 +206,13 @@ export async function getAgentChatData(options = {}) {
   if (options.userDataDir) {
     const userDataSession = await readAgentChatUserDataSession({ userDataDir: options.userDataDir });
     if (userDataSession.ok) {
-      return buildSessionData(userDataSession.data, "userData");
+      const data = buildSessionData(userDataSession.data, "userData");
+      const history = await listAgentChatUserDataSessionHistory({ userDataDir: options.userDataDir });
+
+      return {
+        ...data,
+        recentSessions: history.sessions,
+      };
     }
   }
 

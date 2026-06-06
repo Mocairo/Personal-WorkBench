@@ -7,6 +7,7 @@ import {
   getIntelSourceHealth,
   getIntelServiceStatus,
   getKnowledgeDocumentPreview,
+  listKnowledgeFileTree,
   getCodeRepositoryStructure,
   dryRunTool,
   evaluateToolRequest,
@@ -25,6 +26,8 @@ import {
   listPermissionRequests,
   providerName,
   runAgentChatDryMessage,
+  resetAgentChatSession,
+  restoreAgentChatSession,
   searchKnowledgeLocal,
   startKnowledgeIndex,
   sendAgentChatMessage,
@@ -85,6 +88,19 @@ describe("local provider", () => {
             data: { id, preview: "preview", relativePath: "README.md", source: "local" },
             ok: true,
           }),
+          listTree: async () => ({
+            data: {
+              root: {
+                children: [{ id: "kb-readme-md", name: "README.md", readable: true, relativePath: "README.md", type: "file" }],
+                name: "Knowledge Base",
+                relativePath: "",
+                type: "folder",
+              },
+              source: "local",
+              status: "ready",
+            },
+            ok: true,
+          }),
           listDocuments: async () => ({
             data: [{ id: "doc-readme", relativePath: "README.md", source: "local" }],
             ok: true,
@@ -104,12 +120,22 @@ describe("local provider", () => {
     await expect(listKnowledgeDocuments()).resolves.toEqual([
       { id: "doc-readme", relativePath: "README.md", source: "local" },
     ]);
+    await expect(listKnowledgeFileTree()).resolves.toMatchObject({
+      root: {
+        children: [expect.objectContaining({ relativePath: "README.md", type: "file" })],
+      },
+      source: "local",
+    });
     await expect(searchKnowledgeLocal("readme")).resolves.toMatchObject({
       query: "readme",
       results: [{ id: "doc-readme", relativePath: "README.md" }],
     });
     await expect(getKnowledgeDocumentPreview("doc-readme")).resolves.toMatchObject({
       id: "doc-readme",
+      preview: "preview",
+      relativePath: "README.md",
+    });
+    await expect(getKnowledgeDocumentPreview({ relativePath: "README.md" })).resolves.toMatchObject({
       preview: "preview",
       relativePath: "README.md",
     });
@@ -250,6 +276,20 @@ describe("local provider", () => {
             },
             ok: true,
           }),
+          resetSession: async () => ({
+            data: {
+              chatMessages: [],
+              status: "reset",
+            },
+            ok: true,
+          }),
+          restoreSession: async (input) => ({
+            data: {
+              sessionId: input.sessionId,
+              status: "restored",
+            },
+            ok: true,
+          }),
           sendMessage: async (input) => ({
             data: {
               assistantMessage: { role: "assistant", text: `Live reply: ${input.userText}` },
@@ -324,6 +364,14 @@ describe("local provider", () => {
       dryRun: true,
       mockResponse: { text: "Dry response" },
       sessionId: "session-1",
+    });
+    await expect(resetAgentChatSession()).resolves.toMatchObject({
+      chatMessages: [],
+      status: "reset",
+    });
+    await expect(restoreAgentChatSession({ sessionId: "history-1" })).resolves.toEqual({
+      sessionId: "history-1",
+      status: "restored",
     });
     await expect(sendAgentChatMessage({ sessionId: "session-1", userText: "Hello" })).resolves.toMatchObject({
       assistantMessage: { role: "assistant", text: "Live reply: Hello" },

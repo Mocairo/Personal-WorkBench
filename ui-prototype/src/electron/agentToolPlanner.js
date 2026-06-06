@@ -124,6 +124,13 @@ function inferReadOnlyItems(userText) {
   const lower = text.toLowerCase();
   const items = [];
 
+  if (text) {
+    items.push({
+      args: { query: redactAgentToolText(text) },
+      label: "Knowledge Search",
+      toolId: "kb.searchLocal",
+    });
+  }
   if (/(kb|knowledge|docs?|document|search|context)/.test(lower)) {
     items.push({
       args: { query: redactAgentToolText(text) },
@@ -184,6 +191,34 @@ function inferReadOnlyItems(userText) {
   return items;
 }
 
+function isShortContinuation(text) {
+  const normalized = cleanString(text).toLowerCase();
+  return /^(需要|要|继续|是|是的|好的|可以|请继续|展开|more|yes|y|continue|go on)$/i.test(normalized);
+}
+
+function deriveContinuationQuery(input = {}) {
+  const messages = Array.isArray(input.session?.chatMessages) ? input.session.chatMessages : [];
+  if (!isShortContinuation(input.userText) || messages.length === 0) {
+    return cleanString(input.userText);
+  }
+
+  const recent = messages
+    .slice(-6)
+    .filter((message) => message?.role === "user" || message?.role === "assistant")
+    .map((message) => redactAgentToolText(message.text ?? message.content ?? message.message))
+    .filter(Boolean)
+    .filter((text) => !/<tool_call|<function=/i.test(text));
+  const lastUser = [...messages]
+    .reverse()
+    .find((message) => message?.role === "user" && cleanString(message.text ?? message.content ?? message.message));
+  const lastUserText = lastUser
+    ? redactAgentToolText(lastUser.text ?? lastUser.content ?? lastUser.message)
+    : "";
+  const query = [lastUserText, ...recent].filter(Boolean).join(" ");
+
+  return query ? query.slice(0, 240) : cleanString(input.userText);
+}
+
 function normalizePlanItem(item = {}, index = 0) {
   const normalizedToolId = normalizeAgentToolId(item.toolId ?? item.id);
   const definition = getRegisteredAgentTool(normalizedToolId);
@@ -224,10 +259,11 @@ function dedupePlanItems(items) {
 export function buildAgentToolPlan(input = {}) {
   const structuredItems = parseStructuredPlan(input.llmText);
   const dryRunItems = getDryRunItems(input.dryRunToolPlan);
+  const plannerUserText = deriveContinuationQuery(input);
   const inferredItems = structuredItems.length > 0 || dryRunItems.length > 0
     ? []
     : [
-        ...inferReadOnlyItems(input.userText),
+        ...inferReadOnlyItems(plannerUserText),
         ...inferUnsafeItems(input.userText),
       ];
   const rawItems = structuredItems.length > 0

@@ -1,5 +1,5 @@
-import React, { useState } from "react";
-import { Circle, Database, FileText, Network, Paperclip, Plus, RefreshCcw, Search } from "lucide-react";
+import React, { useMemo, useRef, useState } from "react";
+import { BookOpen, Database, FileText, Folder, Paperclip, Plus, RefreshCcw, Search } from "lucide-react";
 import { EmptyState } from "../components/ui/EmptyState";
 import { GlassPanel } from "../components/ui/GlassPanel";
 import { PageFrame } from "../components/ui/PageFrame";
@@ -21,6 +21,20 @@ const DOCUMENT_FALLBACKS = [
   { chunks: 19, kind: "txt", tag: "notes", updated: "1h", state: "failed" },
 ];
 
+const EMPTY_FILE_TREE = {
+  root: {
+    children: [],
+    id: "knowledge-base-root",
+    name: "Knowledge Base",
+    readable: false,
+    relativePath: "",
+    type: "folder",
+  },
+  source: "local",
+  status: "missing",
+  total: 0,
+};
+
 const DISPLAY_SECRET_ASSIGNMENT_PATTERN = /\b(api[_-]?key|token|secret|password)\s*[:=]\s*[^\s,;]+/gi;
 const DISPLAY_AUTHORIZATION_PATTERN = /\bAuthorization:\s*Bearer\s+[^\s,;]+/gi;
 const DISPLAY_OPENAI_KEY_PATTERN = /\bsk-[A-Za-z0-9_-]+/g;
@@ -38,8 +52,13 @@ function redactDisplayText(value) {
     .replace(DISPLAY_WINDOWS_PATH_PATTERN, "[redacted-path]");
 }
 
+function cleanDisplayText(value) {
+  return redactDisplayText(value).trim();
+}
+
 export function getKnowledgeDisplayData(data) {
   return {
+    fileTree: data.fileTree ?? EMPTY_FILE_TREE,
     graphNodes: data.graphNodes ?? [],
     indexStats: {
       ...DEFAULT_INDEX_STATS,
@@ -86,6 +105,38 @@ export function filterKnowledgeDocumentRows(rows = [], query = "") {
   });
 }
 
+export function filterKnowledgeFileTree(nodes = [], query = "") {
+  const normalizedQuery = cleanDisplayText(query).toLowerCase();
+
+  if (!normalizedQuery) {
+    return nodes;
+  }
+
+  return nodes
+    .map((node) => {
+      const ownMatch = [node.name, node.relativePath, node.ext, node.type]
+        .filter(Boolean)
+        .join(" ")
+        .toLowerCase()
+        .includes(normalizedQuery);
+      const children = filterKnowledgeFileTree(node.children ?? [], query);
+
+      if (ownMatch) {
+        return node;
+      }
+
+      if (children.length > 0) {
+        return {
+          ...node,
+          children,
+        };
+      }
+
+      return null;
+    })
+    .filter(Boolean);
+}
+
 function limitDisplayText(value, maxChars = 480) {
   const text = redactDisplayText(value);
   if (text.length <= maxChars) {
@@ -110,8 +161,74 @@ export function getKnowledgeAttachmentInput(doc = {}, sessionId = "local-session
   };
 }
 
+export function getKnowledgeFileAttachmentInput(file = {}, sessionId = "local-session", selectedText = "") {
+  const selection = cleanDisplayText(selectedText);
+  const isSelection = selection.length > 0;
+  const documentId = cleanDisplayText(file.documentId ?? file.id);
+  const title = cleanDisplayText(file.title ?? file.name ?? file.relativePath ?? "Knowledge context");
+  const preview = isSelection
+    ? selection
+    : cleanDisplayText(file.preview ?? file.excerpt ?? file.summary ?? file.content);
+
+  return {
+    ...(isSelection && documentId ? { contextId: `${documentId}:selection` } : {}),
+    ...(documentId ? { documentId } : {}),
+    matchType: isSelection ? "selection" : "document",
+    preview: limitDisplayText(preview),
+    relativePath: cleanDisplayText(file.relativePath ?? file.path),
+    score: Number.isFinite(file.score) ? file.score : 1,
+    sessionId: cleanDisplayText(sessionId) || "local-session",
+    sourceType: "knowledge",
+    title,
+    updatedAt: cleanDisplayText(file.updatedAt),
+  };
+}
+
 export async function attachKnowledgeDocumentToAgentChat(doc = {}, provider = dataProvider, sessionId = "local-session") {
   return provider.attachKnowledgeContextToAgentChat(getKnowledgeAttachmentInput(doc, sessionId));
+}
+
+export function getKnowledgePreviewInput(item = {}) {
+  if (!item || item.type === "folder") {
+    return null;
+  }
+
+  const id = cleanDisplayText(item.documentId ?? item.id);
+  const relativePath = cleanDisplayText(item.relativePath ?? item.path);
+
+  return {
+    ...(id ? { id } : {}),
+    ...(relativePath ? { relativePath } : {}),
+  };
+}
+
+export function getKnowledgeReaderView(preview = {}, mode = "markdown") {
+  const content = redactDisplayText(preview.content ?? preview.preview ?? preview.excerpt ?? "");
+  const type = cleanDisplayText(preview.type ?? preview.ext ?? "");
+  const relativePath = cleanDisplayText(preview.relativePath ?? "");
+  const isMarkdown = type === "md" || type === "markdown" || /\.md(?:$|[?#])/i.test(relativePath);
+  const normalizedMode = mode === "raw" ? "raw" : "markdown";
+
+  return {
+    content,
+    mode: normalizedMode,
+    renderAsMarkdown: normalizedMode === "markdown" && isMarkdown,
+  };
+}
+
+export async function runKnowledgeFullTextSearch(query = "", provider = dataProvider) {
+  const normalizedQuery = cleanDisplayText(query);
+
+  if (!normalizedQuery) {
+    return {
+      query: "",
+      results: [],
+      status: "empty",
+      total: 0,
+    };
+  }
+
+  return provider.searchKnowledgeLocal(normalizedQuery);
 }
 
 function countLabel(value = 0, noun = "item") {
@@ -189,19 +306,178 @@ export async function runKnowledgeReindex(provider = dataProvider, reload = () =
   }
 }
 
+function buildFallbackFileTree(documents = []) {
+  return {
+    ...EMPTY_FILE_TREE,
+    root: {
+      ...EMPTY_FILE_TREE.root,
+      children: documents.map((doc) => ({
+        ext: doc.type ?? doc.kind,
+        id: doc.id ?? doc.documentId ?? doc.relativePath,
+        name: doc.title ?? doc.name ?? doc.relativePath,
+        readable: doc.status !== "metadata-only" && doc.state !== "metadata-only",
+        relativePath: doc.relativePath,
+        size: doc.size ?? 0,
+        type: "file",
+        updatedAt: doc.updatedAt,
+      })).filter((node) => node.relativePath),
+    },
+    status: documents.length > 0 ? "ready" : "missing",
+    total: documents.length,
+  };
+}
+
+function formatBytes(value = 0) {
+  if (!Number.isFinite(value) || value <= 0) {
+    return "0 B";
+  }
+  if (value < 1024) {
+    return `${value} B`;
+  }
+  if (value < 1024 * 1024) {
+    return `${Math.round(value / 1024)} KB`;
+  }
+  return `${(value / (1024 * 1024)).toFixed(1)} MB`;
+}
+
+function selectedTextFromWindow() {
+  return globalThis.window?.getSelection?.().toString?.() ?? "";
+}
+
+function getInspectorRows(file = {}) {
+  if (!file?.relativePath && !file?.title) {
+    return [];
+  }
+
+  return [
+    { label: "name", value: file.title ?? file.name ?? file.relativePath },
+    { label: "path", value: file.relativePath },
+    { label: "type", value: file.type ?? file.ext ?? "document" },
+    { label: "size", value: formatBytes(file.size) },
+    { label: "updated", value: file.updatedAt ?? "unknown" },
+    { label: "readable", value: file.readable === false ? "unreadable" : "readable" },
+  ].filter((row) => row.value !== undefined && row.value !== null && row.value !== "");
+}
+
+function renderMarkdownInline(text = "") {
+  const parts = [];
+  const pattern = /\*\*([^*\n]+)\*\*/g;
+  let cursor = 0;
+  let match;
+
+  while ((match = pattern.exec(text)) !== null) {
+    if (match.index > cursor) {
+      parts.push(text.slice(cursor, match.index));
+    }
+    parts.push(<strong key={`strong-${match.index}`}>{match[1]}</strong>);
+    cursor = match.index + match[0].length;
+  }
+
+  if (cursor < text.length) {
+    parts.push(text.slice(cursor));
+  }
+
+  return parts.length > 0 ? parts : text;
+}
+
+function renderMarkdownBlock(block, index) {
+  const lines = block.split(/\n/).map((line) => line.trim()).filter(Boolean);
+  const heading = lines[0]?.match(/^(#{1,3})\s+(.+)/);
+
+  if (heading) {
+    const Tag = heading[1].length === 1 ? "h2" : "h3";
+    const rest = lines.slice(1).join("\n");
+
+    return (
+      <React.Fragment key={`heading-${index}`}>
+        <Tag>{renderMarkdownInline(heading[2])}</Tag>
+        {rest ? renderMarkdownBlock(rest, `${index}-rest`) : null}
+      </React.Fragment>
+    );
+  }
+
+  if (/^[-*]\s+/m.test(block)) {
+    return (
+      <ul key={`list-${index}`}>
+        {lines.map((line) => line.replace(/^[-*]\s+/, "")).map((line) => (
+          <li key={line}>{renderMarkdownInline(line)}</li>
+        ))}
+      </ul>
+    );
+  }
+
+  return <p key={`p-${index}`}>{renderMarkdownInline(block)}</p>;
+}
+
+export function MarkdownBlocks({ content }) {
+  const blocks = content.split(/\n{2,}/).map((block) => block.trim()).filter(Boolean);
+
+  return (
+    <div className="kb-markdown">
+      {blocks.length === 0 ? (
+        <p>No readable content.</p>
+      ) : (
+        blocks.map((block, index) => {
+          return renderMarkdownBlock(block, index);
+        })
+      )}
+    </div>
+  );
+}
+
+function FileTreeNode({ activePath, level = 0, node, onOpen }) {
+  if (node.type === "folder") {
+    return (
+      <details className="kb-tree-folder" open>
+        <summary style={{ "--depth": level }}>
+          <Folder size={15} />
+          <span>{node.name}</span>
+        </summary>
+        <div>
+          {(node.children ?? []).map((child) => (
+            <FileTreeNode activePath={activePath} key={child.id ?? child.relativePath} level={level + 1} node={child} onOpen={onOpen} />
+          ))}
+        </div>
+      </details>
+    );
+  }
+
+  return (
+    <button
+      className={`kb-tree-file ${activePath === node.relativePath ? "active" : ""} ${node.readable === false ? "unreadable" : ""}`}
+      onClick={() => onOpen(node)}
+      style={{ "--depth": level }}
+      type="button"
+    >
+      <FileText size={15} />
+      <span>{node.name}</span>
+      <small>{node.ext ?? "file"}</small>
+    </button>
+  );
+}
+
 export function KnowledgeBase() {
   const [searchQuery, setSearchQuery] = useState("");
+  const [centerMode, setCenterMode] = useState("reader");
+  const [readerMode, setReaderMode] = useState("markdown");
+  const [currentFile, setCurrentFile] = useState(null);
+  const [searchResult, setSearchResult] = useState(null);
   const [reindexStatus, setReindexStatus] = useState(null);
   const [reindexBusy, setReindexBusy] = useState(false);
   const [attachStatus, setAttachStatus] = useState(null);
-  const [attachedIds, setAttachedIds] = useState(() => new Set());
+  const [openStatus, setOpenStatus] = useState(null);
+  const readerRef = useRef(null);
   const { data, reload } = useKnowledgeBaseData();
-  const { graphNodes, indexStats, knowledgeDocuments, providerStatus, sourceHealth } = getKnowledgeDisplayData(data);
+  const { fileTree, indexStats, knowledgeDocuments, providerStatus, sourceHealth } = getKnowledgeDisplayData(data);
   const documentRows = getKnowledgeDocumentRows(knowledgeDocuments);
-  const visibleDocumentRows = filterKnowledgeDocumentRows(documentRows, searchQuery);
-  const selectedNode = graphNodes[0] ?? "No node";
-  const indexMode = indexStats.embeddingProvider ?? "keyword";
+  const treeData = fileTree?.root ? fileTree : buildFallbackFileTree(documentRows);
+  const visibleTree = useMemo(
+    () => filterKnowledgeFileTree(treeData.root.children ?? [], searchQuery),
+    [treeData.root.children, searchQuery],
+  );
   const indexStatusRows = getKnowledgeIndexStatusRows(indexStats, providerStatus, sourceHealth, reindexStatus);
+  const readerView = getKnowledgeReaderView(currentFile ?? {}, readerMode);
+  const inspectorRows = getInspectorRows(currentFile);
 
   const handleReindex = async () => {
     if (reindexBusy) {
@@ -215,12 +491,50 @@ export function KnowledgeBase() {
     setReindexBusy(false);
   };
 
-  const handleAttachDocument = async (doc) => {
-    const docId = doc.id ?? doc.documentId ?? doc.relativePath ?? doc.title;
+  const handleOpenFile = async (item) => {
+    const input = getKnowledgePreviewInput(item);
+    if (!input) {
+      return;
+    }
+
+    setOpenStatus({ message: "Opening file...", status: "running" });
+    try {
+      const preview = await dataProvider.getKnowledgeDocumentPreview(input);
+      setCurrentFile(preview);
+      setCenterMode("reader");
+      setOpenStatus(null);
+    } catch (error) {
+      setCurrentFile({
+        ...item,
+        content: "",
+        message: error?.message || "Could not open this file.",
+        readable: false,
+        status: "error",
+      });
+      setCenterMode("reader");
+      setOpenStatus({ message: error?.message || "Open failed", status: "error" });
+    }
+  };
+
+  const handleFullSearch = async (event) => {
+    event?.preventDefault?.();
+    setSearchResult({ query: searchQuery.trim(), results: [], status: "running", total: 0 });
+    const result = await runKnowledgeFullTextSearch(searchQuery, dataProvider);
+    setSearchResult(result);
+    setCenterMode("results");
+  };
+
+  const handleAttachCurrentFile = async () => {
+    if (!currentFile) {
+      setAttachStatus({ message: "Open a file first", status: "idle" });
+      return;
+    }
+
+    const selectedText = selectedTextFromWindow();
+    const input = getKnowledgeFileAttachmentInput(currentFile, "local-session", selectedText);
     setAttachStatus({ message: "Attaching context...", status: "running" });
     try {
-      const result = await attachKnowledgeDocumentToAgentChat(doc, dataProvider, "local-session");
-      setAttachedIds((current) => new Set([...current, docId]));
+      const result = await dataProvider.attachKnowledgeContextToAgentChat(input);
       setAttachStatus({
         message: `${result.attachedKnowledgeContexts?.length ?? 1} context attached`,
         status: result.status ?? "saved",
@@ -230,11 +544,24 @@ export function KnowledgeBase() {
     }
   };
 
+  const handleAttachResult = async (result) => {
+    setAttachStatus({ message: "Attaching search result...", status: "running" });
+    try {
+      const attach = await attachKnowledgeDocumentToAgentChat(result, dataProvider, "local-session");
+      setAttachStatus({
+        message: `${attach.attachedKnowledgeContexts?.length ?? 1} context attached`,
+        status: attach.status ?? "saved",
+      });
+    } catch (error) {
+      setAttachStatus({ message: error?.message || "Attach unavailable", status: "error" });
+    }
+  };
+
   return (
     <PageFrame
-      eyebrow="RAG Workspace"
+      eyebrow="Knowledge Library"
       title="Knowledge Base"
-      subtitle="Local knowledge workspace"
+      subtitle="Browse, read, search, and attach local knowledge safely"
       actions={
         <>
           <button className="soft-button" type="button">
@@ -246,118 +573,147 @@ export function KnowledgeBase() {
             {reindexBusy ? "Indexing..." : "Reindex"}
           </button>
           <span className="settings-save-state">
-            {attachStatus?.message ?? reindexStatus?.message ?? indexStats.status ?? "index local"}
+            {attachStatus?.message ?? openStatus?.message ?? reindexStatus?.message ?? indexStats.status ?? "ready"}
           </span>
         </>
       }
     >
-      <div className="knowledge-grid">
-        <GlassPanel className="doc-list-panel">
-          <div className="knowledge-mode-strip">
-            <span>semantic</span>
-            <span>keyword</span>
-            <span>chunks</span>
-          </div>
-          <div className="search-field">
-            <Search size={16} />
-            <input
-              aria-label="Search knowledge documents"
-              onChange={(event) => setSearchQuery(event.target.value)}
-              placeholder="Search local notes, docs and chunks"
-              type="search"
-              value={searchQuery}
-            />
-            <span className="search-count">{visibleDocumentRows.length}/{documentRows.length}</span>
-          </div>
-          <div className="document-list">
-            {visibleDocumentRows.length === 0 ? (
+      <div className="kb-reader-layout">
+        <GlassPanel className="kb-tree-panel">
+          <PanelHeader icon={Folder} title="File tree" aside={`${treeData.total ?? visibleTree.length} items`} />
+          <form className="kb-search-form" onSubmit={handleFullSearch}>
+            <div className="search-field">
+              <Search size={16} />
+              <input
+                aria-label="Filter Knowledge file tree"
+                onChange={(event) => setSearchQuery(event.target.value)}
+                placeholder="Filter files, Enter for full search"
+                type="search"
+                value={searchQuery}
+              />
+            </div>
+            <button className="soft-button muted" type="submit">全文搜索</button>
+          </form>
+          <div className="kb-tree-list">
+            {visibleTree.length === 0 ? (
               <EmptyState
-                title={documentRows.length === 0 ? "No documents indexed" : "No matching documents"}
-                detail={documentRows.length === 0 ? "Choose a knowledge folder in Settings." : "Try another local keyword."}
+                title={treeData.root.children?.length === 0 ? "No files found" : "No matching files"}
+                detail={treeData.root.children?.length === 0 ? "Choose a Knowledge Base folder in Settings." : "Try another file name or path."}
               />
             ) : (
-              visibleDocumentRows.map((doc) => {
-                const docKey = doc.id ?? doc.documentId ?? doc.relativePath ?? doc.title;
-                return (
-                <div className={`document-row rich ${doc.state}`} key={docKey}>
-                  <FileText size={17} />
-                  <div>
-                    <strong>{doc.title}</strong>
-                    <small>
-                      {doc.kind} / {doc.tag} / {doc.chunks} chunks / {doc.updated}
-                    </small>
-                  </div>
-                  <span>{attachedIds.has(docKey) ? "attached" : doc.state}</span>
-                  <button
-                    aria-label={`Attach ${doc.title} to Agent Chat`}
-                    className="icon-button ghost"
-                    onClick={() => handleAttachDocument(doc)}
-                    type="button"
-                  >
-                    <Paperclip size={14} />
-                  </button>
-                </div>
-                );
-              })
-            )}
-          </div>
-        </GlassPanel>
-
-        <GlassPanel className="graph-panel">
-          <PanelHeader icon={Network} title="Knowledge graph" aside={`selected: ${selectedNode}`} />
-          <div className="knowledge-graph">
-            {graphNodes.length === 0 ? (
-              <EmptyState title="No graph yet" detail="Index documents to generate graph nodes." />
-            ) : (
-              graphNodes.map((node, index) => (
-                <span className={`graph-node n${index + 1} ${index === 0 ? "selected" : ""}`} key={node}>
-                  {node}
-                </span>
+              visibleTree.map((node) => (
+                <FileTreeNode activePath={currentFile?.relativePath} key={node.id ?? node.relativePath} node={node} onOpen={handleOpenFile} />
               ))
             )}
-            <svg viewBox="0 0 500 300" role="presentation">
-              <path d="M110 76 C180 40 250 42 340 72" />
-              <path d="M170 198 C230 130 315 132 388 180" />
-              <path d="M126 86 C120 160 148 208 230 230" />
-              <path d="M342 78 C392 116 405 146 392 180" />
-              <path d="M232 230 C282 250 350 230 388 180" />
-            </svg>
-            <div className="graph-detail">
-              <strong>{selectedNode}</strong>
-              <span>{Math.max(1, Math.min(documentRows.length, 5))} related docs</span>
-              <span>{Math.max(indexStats.chunks, documentRows.length)} linked chunks</span>
-            </div>
           </div>
         </GlassPanel>
 
-        <GlassPanel className="index-panel">
-          <PanelHeader icon={Circle} title="Index state" aside="2 workers" />
-          <div className="index-meter">
-            <span style={{ "--value": indexStats.progress }} />
-          </div>
-          <div className="index-stats">
-            <div>
-              <strong>{indexStats.chunks.toLocaleString()}</strong>
-              <span>chunks</span>
+        <GlassPanel className="kb-reader-panel">
+          {centerMode === "results" ? (
+            <>
+              <PanelHeader icon={Search} title="Full-text results" aside={`${searchResult?.total ?? 0} matches`} />
+              <div className="kb-result-list">
+                {searchResult?.status === "running" ? (
+                  <EmptyState title="Searching Knowledge Base" detail="Checking local index and text matches." />
+                ) : (searchResult?.results ?? []).length === 0 ? (
+                  <EmptyState title="No search results" detail="Press Enter or use another full-text query." />
+                ) : (
+                  searchResult.results.map((result) => (
+                    <div className="kb-search-result" key={result.chunkId ?? result.id ?? result.relativePath}>
+                      <button onClick={() => handleOpenFile(result)} type="button">
+                        <strong>{redactDisplayText(result.title ?? result.relativePath)}</strong>
+                        <small>{redactDisplayText(result.relativePath)}</small>
+                        <span>{limitDisplayText(result.preview ?? result.excerpt, 220)}</span>
+                      </button>
+                      <button
+                        aria-label={`Attach ${result.title ?? result.relativePath} to Agent Chat`}
+                        className="icon-button ghost"
+                        onClick={() => handleAttachResult(result)}
+                        type="button"
+                      >
+                        <Paperclip size={14} />
+                      </button>
+                    </div>
+                  ))
+                )}
+              </div>
+            </>
+          ) : (
+            <>
+              <PanelHeader
+                icon={BookOpen}
+                title="Reader"
+                aside={currentFile?.relativePath ? redactDisplayText(currentFile.relativePath) : "no file open"}
+              />
+              <div className="kb-reader-toolbar">
+                <div className="kb-mode-toggle" role="group" aria-label="Reader mode">
+                  <button className={readerMode === "markdown" ? "active" : ""} onClick={() => setReaderMode("markdown")} type="button">
+                    Markdown
+                  </button>
+                  <button className={readerMode === "raw" ? "active" : ""} onClick={() => setReaderMode("raw")} type="button">
+                    Raw
+                  </button>
+                </div>
+                {currentFile?.truncated ? <span>Preview truncated</span> : null}
+              </div>
+              <div className="kb-reader-body" ref={readerRef}>
+                {!currentFile ? (
+                  <EmptyState title="Select a file to read" detail="Use the file tree or full-text results to open a source." />
+                ) : currentFile.readable === false ? (
+                  <EmptyState title="Preview unavailable" detail={currentFile.message ?? "This file is available as metadata only."} />
+                ) : readerView.renderAsMarkdown ? (
+                  <MarkdownBlocks content={readerView.content} />
+                ) : (
+                  <pre>{readerView.content || "No readable content."}</pre>
+                )}
+              </div>
+            </>
+          )}
+        </GlassPanel>
+
+        <GlassPanel className="kb-inspector-panel">
+          <PanelHeader icon={FileText} title="Inspector" aside={currentFile?.readable === false ? "metadata" : "reader"} />
+          {inspectorRows.length === 0 ? (
+            <EmptyState title="No file selected" detail="Open a file to inspect metadata and attach context." />
+          ) : (
+            <div className="kb-inspector-list">
+              {inspectorRows.map((row) => (
+                <div className="kb-inspector-row" key={row.label}>
+                  <span>{row.label}</span>
+                  <strong>{redactDisplayText(String(row.value))}</strong>
+                </div>
+              ))}
             </div>
-            <div>
-              <strong>{indexStats.docs}</strong>
-              <span>docs</span>
+          )}
+          <button className="soft-button kb-attach-button" disabled={!currentFile} onClick={handleAttachCurrentFile} type="button">
+            <Paperclip size={15} />
+            Attach
+          </button>
+          <details className="kb-index-health">
+            <summary>
+              <Database size={15} />
+              Index Health
+            </summary>
+            <div className="index-stats compact">
+              <div>
+                <strong>{indexStats.docs}</strong>
+                <span>docs</span>
+              </div>
+              <div>
+                <strong>{indexStats.chunks.toLocaleString()}</strong>
+                <span>chunks</span>
+              </div>
+              <div>
+                <strong>{indexStats.failed ?? 0}</strong>
+                <span>failed</span>
+              </div>
             </div>
-            <div>
-              <strong>{indexStats.pending}</strong>
-              <span>pending</span>
+            <div className="index-provider-list compact">
+              {indexStatusRows.map((row) => (
+                <span key={row.label}>{row.label}: {row.value}</span>
+              ))}
             </div>
-          </div>
-          <div className="index-provider-list">
-            <span>
-              <Database size={14} />
-              index: {indexMode}
-            </span>
-            {indexStatusRows.map((row) => (
-              <span key={row.label}>{row.label}: {row.value}</span>
-            ))}
-          </div>
+          </details>
         </GlassPanel>
       </div>
     </PageFrame>

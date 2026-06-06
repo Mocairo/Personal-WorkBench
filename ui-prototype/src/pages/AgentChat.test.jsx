@@ -3,19 +3,70 @@ import {
   getChatStatusSummary,
   getComposerSendState,
   getContextRows,
+  getMessageCitationChips,
+  getRecentSessionRows,
   getTimelineRows,
   getToolApprovalState,
   mergeDryRunResultIntoChatData,
   mergeAttachedKnowledgeContextResultIntoChatData,
+  mergeResetAgentChatResultIntoChatData,
   mergeSendErrorIntoChatData,
   mergeStreamEventIntoChatData,
   mergeStreamResultIntoChatData,
   mergeStreamStartIntoChatData,
   mergeTextSendResultIntoChatData,
+  parseMarkdownBlocks,
 } from "./AgentChat";
 
 describe("AgentChat page data binding helpers", () => {
-  it("keeps rich context metadata from local sessions", () => {
+  it("parses assistant markdown into display blocks instead of raw symbols", () => {
+    const blocks = parseMarkdownBlocks([
+      "### **核心定位**",
+      "Transformers 是 **预训练模型** 的工具箱。",
+      "- **模型**: BERT、GPT",
+      "- `pipeline`: 一行代码完成任务",
+      "```python",
+      "print('hello')",
+      "```",
+    ].join("\n"));
+
+    expect(blocks).toEqual([
+      {
+        children: [{ text: "核心定位", type: "strong" }],
+        level: 3,
+        type: "heading",
+      },
+      {
+        children: [
+          { text: "Transformers 是 ", type: "text" },
+          { text: "预训练模型", type: "strong" },
+          { text: " 的工具箱。", type: "text" },
+        ],
+        type: "paragraph",
+      },
+      {
+        items: [
+          [
+            { text: "模型", type: "strong" },
+            { text: ": BERT、GPT", type: "text" },
+          ],
+          [
+            { text: "pipeline", type: "code" },
+            { text: ": 一行代码完成任务", type: "text" },
+          ],
+        ],
+        ordered: false,
+        type: "list",
+      },
+      {
+        language: "python",
+        text: "print('hello')",
+        type: "code",
+      },
+    ]);
+  });
+
+  it("hides ordinary context pack items from the left panel", () => {
     const rows = getContextRows([
       {
         chunks: 8,
@@ -26,26 +77,51 @@ describe("AgentChat page data binding helpers", () => {
       },
     ]);
 
-    expect(rows[0]).toMatchObject({
-      active: true,
-      chunks: 8,
-      title: "docs/agent.md",
-      tokens: "2.4k",
-      type: "doc",
-      updated: "2026-06-03T10:00:00.000Z",
-    });
+    expect(rows).toEqual([]);
   });
 
-  it("adds compact context summary rows without exposing unsafe display text", () => {
+  it("does not render ordinary context pack items as fixed left-panel blocks", () => {
+    const rows = getContextRows([
+      {
+        chunks: 8,
+        title: "Ambient doc from context pack",
+        tokens: "2.4k",
+        type: "doc",
+      },
+      {
+        title: "Selected agent",
+        type: "agent",
+      },
+    ]);
+
+    expect(rows).toEqual([]);
+  });
+
+  it("adds compact context summary rows without exposing individual source filenames", () => {
     const rows = getContextRows(
       [],
       {
+        sourceRefs: [
+          {
+            matchType: "hybrid",
+            preview: "Preview apiKey=sk-context-row",
+            relativePath: "D:\\private\\vault\\doc.md",
+            sourceRefId: "S1",
+            sourceType: "knowledge",
+            title: "Doc Source token=sk-title-row",
+          },
+        ],
         trimmed: {
           contextItems: 1,
           history: 2,
           toolResults: 0,
         },
         usedContextItems: [
+          {
+            sourceType: "session",
+            status: "used",
+            title: "Session context token=sk-session-context",
+          },
           {
             sourceType: "knowledge",
             status: "used",
@@ -71,11 +147,15 @@ describe("AgentChat page data binding helpers", () => {
         type: "session",
       }),
       expect.objectContaining({
-        title: "[redacted-path] [redacted]",
+        title: "Session context",
+        type: "session",
+      }),
+      expect.objectContaining({
+        title: "Referenced sources",
         type: "knowledge",
       }),
       expect.objectContaining({
-        title: "Knowledge Search [redacted]",
+        title: "Tool results used",
         type: "tool",
       }),
       expect.objectContaining({
@@ -83,7 +163,91 @@ describe("AgentChat page data binding helpers", () => {
         type: "audit",
       }),
     ]);
-    expect(JSON.stringify(rows)).not.toMatch(/sk-|apiKey|token=|D:\\private|Authorization/i);
+    expect(JSON.stringify(rows)).not.toMatch(/Doc Source|sk-|apiKey|token=|D:\\private|Authorization/i);
+  });
+
+  it("summarizes source refs in the context panel instead of listing every file", () => {
+    const rows = getContextRows(
+      [],
+      {
+        sourceRefs: [
+          {
+            matchType: "hybrid",
+            preview: "Preview apiKey=sk-context-row",
+            relativePath: "D:\\private\\vault\\doc.md",
+            sourceRefId: "S1",
+            sourceType: "knowledge",
+            title: "Doc Source token=sk-title-row",
+          },
+        ],
+        usedContextItems: [],
+        usedHistoryCount: 0,
+        usedToolResults: [],
+      },
+    );
+
+    expect(rows).toEqual([
+      expect.objectContaining({
+        chunks: 1,
+        title: "Referenced sources",
+        tokens: "hybrid",
+        type: "knowledge",
+        updated: "current run",
+      }),
+    ]);
+    expect(JSON.stringify(rows)).not.toMatch(/Doc Source|sk-context-row|sk-title-row|apiKey|token=|D:\\private/i);
+  });
+
+  it("builds sanitized recent chat rows for history restore", () => {
+    const rows = getRecentSessionRows([
+      {
+        lastUpdated: "2026-06-05T10:00:00.000Z",
+        messageCount: 4,
+        preview: "Old answer token=sk-history-preview",
+        sessionId: "history-1",
+        title: "D:\\private\\vault\\论文模板.md apiKey=sk-history-title",
+      },
+    ]);
+
+    expect(rows).toEqual([
+      expect.objectContaining({
+        messageCount: 4,
+        preview: "Old answer [redacted]",
+        sessionId: "history-1",
+        title: "[redacted-path] [redacted]",
+      }),
+    ]);
+    expect(JSON.stringify(rows)).not.toMatch(/sk-history|apiKey|token=|D:\\private/i);
+  });
+
+  it("builds assistant citation chips from sanitized message metadata", () => {
+    const chips = getMessageCitationChips({
+      metadata: {
+        citations: [
+          {
+            matchType: "hybrid",
+            preview: "Preview token=sk-chip-secret",
+            relativePath: "D:\\private\\vault\\doc.md",
+            sourceRefId: "S1",
+            sourceType: "knowledge",
+            title: "Doc Source apiKey=sk-chip-title",
+          },
+        ],
+      },
+      role: "assistant",
+      text: "Grounded answer.",
+    });
+
+    expect(chips).toEqual([
+      expect.objectContaining({
+        label: "S1",
+        matchType: "hybrid",
+        preview: "Preview [redacted]",
+        title: "Doc Source [redacted]",
+        updated: "[redacted-path]",
+      }),
+    ]);
+    expect(JSON.stringify(chips)).not.toMatch(/sk-chip|apiKey|token=|D:\\private/i);
   });
 
   it("shows attached knowledge contexts before ordinary context rows", () => {
@@ -117,7 +281,7 @@ describe("AgentChat page data binding helpers", () => {
       type: "knowledge",
       updated: "[redacted-path]",
     });
-    expect(rows[1]).toMatchObject({ title: "Ordinary context" });
+    expect(rows).toHaveLength(1);
     expect(JSON.stringify(rows)).not.toMatch(/sk-attached|apiKey|token=|D:\\private/);
   });
 
@@ -139,6 +303,33 @@ describe("AgentChat page data binding helpers", () => {
     expect(updated).toMatchObject({
       attachedKnowledgeContextCount: 1,
       attachedKnowledgeContexts: [{ contextId: "new", title: "New" }],
+    });
+  });
+
+  it("replaces visible state with an empty Agent Chat session after reset", () => {
+    const updated = mergeResetAgentChatResultIntoChatData(
+      {
+        attachedKnowledgeContexts: [{ contextId: "old", title: "Old" }],
+        chatMessages: [{ role: "assistant", text: "Old answer" }],
+        contextItems: [{ title: "Old context" }],
+        toolCalls: [{ title: "Old tool" }],
+      },
+      {
+        attachedKnowledgeContexts: [],
+        chatMessages: [],
+        contextItems: [],
+        session: { messageCount: 0, status: "ready" },
+        status: "reset",
+        toolCalls: [],
+      },
+    );
+
+    expect(updated).toMatchObject({
+      attachedKnowledgeContexts: [],
+      chatMessages: [],
+      contextItems: [],
+      session: { messageCount: 0 },
+      toolCalls: [],
     });
   });
 

@@ -131,6 +131,39 @@ function getMockKnowledgeDocuments() {
   });
 }
 
+function getMockKnowledgeFileTreeData() {
+  const documents = getMockKnowledgeDocuments();
+
+  return {
+    root: {
+      children: documents.map((doc) => ({
+        ext: doc.type,
+        id: doc.id,
+        name: doc.title,
+        readable: true,
+        relativePath: doc.relativePath,
+        size: doc.size ?? 0,
+        type: "file",
+        updatedAt: doc.updatedAt,
+      })),
+      id: "knowledge-base-root",
+      name: "Knowledge Base",
+      readable: false,
+      relativePath: "",
+      type: "folder",
+    },
+    source: "mock",
+    status: "mock",
+    summary: {
+      errors: 0,
+      files: documents.length,
+      folders: 0,
+      skipped: 0,
+    },
+    total: documents.length,
+  };
+}
+
 export function getMockHomeDashboardData() {
   return {
     serviceState,
@@ -250,6 +283,20 @@ export async function runAgentChatDryMessage(input = {}) {
     draft,
     toolPlan,
   });
+}
+
+export async function resetAgentChatSession() {
+  mockAttachedKnowledgeContexts.splice(0);
+
+  return {
+    ...getMockAgentChatData(),
+    attachedKnowledgeContextCount: 0,
+    attachedKnowledgeContexts: [],
+    chatMessages: [],
+    contextItems: [],
+    status: "reset",
+    toolCalls: [],
+  };
 }
 
 export async function sendAgentChatMessage(input = {}) {
@@ -403,6 +450,7 @@ export function getMockKnowledgeBaseData() {
   const documents = getMockKnowledgeDocuments();
 
   return {
+    fileTree: getMockKnowledgeFileTreeData(),
     graphNodes,
     indexStats: {
       chunks: 1248,
@@ -432,6 +480,10 @@ export async function getKnowledgeBase() {
 
 export async function listKnowledgeDocuments() {
   return getMockKnowledgeDocuments();
+}
+
+export async function listKnowledgeFileTree() {
+  return getMockKnowledgeFileTreeData();
 }
 
 export async function searchKnowledgeLocal(query = "") {
@@ -474,8 +526,14 @@ export async function startKnowledgeIndex() {
   };
 }
 
-export async function getKnowledgeDocumentPreview(documentId) {
-  const document = getMockKnowledgeDocuments().find((doc) => doc.id === documentId) ?? getMockKnowledgeDocuments()[0];
+export async function getKnowledgeDocumentPreview(input) {
+  const documentId = typeof input === "string" ? input : input?.id ?? input?.documentId;
+  const relativePath = typeof input === "object" ? input?.relativePath : "";
+  const document = getMockKnowledgeDocuments().find((doc) => (
+    doc.id === documentId ||
+    doc.documentId === documentId ||
+    doc.relativePath === relativePath
+  )) ?? getMockKnowledgeDocuments()[0];
 
   return {
     ...document,
@@ -489,6 +547,9 @@ export async function getKnowledgeDocumentPreview(documentId) {
         title: document.title,
       }),
     ],
+    content: document.preview,
+    readable: true,
+    truncated: false,
   };
 }
 

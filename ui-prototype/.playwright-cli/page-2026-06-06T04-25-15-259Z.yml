@@ -1,0 +1,97 @@
+- main [ref=e3]:
+  - region "Local desktop console prototype" [ref=e5]:
+    - generic [ref=e6]:
+      - generic [ref=e7]:
+        - img [ref=e9]
+        - generic [ref=e11]: Local Console
+        - generic [ref=e13]: Knowledge Base
+      - generic "Window controls" [ref=e14]:
+        - button "Minimize" [ref=e15] [cursor=pointer]:
+          - img [ref=e16]
+        - button "Maximize" [ref=e21] [cursor=pointer]:
+          - img [ref=e22]
+        - button "Close" [ref=e27] [cursor=pointer]:
+          - img [ref=e28]
+    - navigation "Global shell controls" [ref=e31]:
+      - button "Knowledge Base Alt Q" [ref=e237] [cursor=pointer]:
+        - img [ref=e238]
+        - generic [ref=e37]: Knowledge Base
+        - generic [ref=e38]: Alt Q
+      - generic [ref=e39]:
+        - generic [ref=e40]: Indexing local sources
+        - generic [ref=e42]: Synced 2m ago
+        - generic [ref=e44]: Mock data bridge
+      - button "Command palette" [ref=e46] [cursor=pointer]:
+        - img [ref=e47]
+      - button "Settings" [ref=e49] [cursor=pointer]:
+        - img [ref=e50]
+    - generic [ref=e240]:
+      - generic [ref=e241]:
+        - generic [ref=e242]:
+          - generic [ref=e243]: Knowledge Library
+          - heading "Knowledge Base" [level=1] [ref=e244]
+        - generic [ref=e245]:
+          - button "Import" [ref=e246] [cursor=pointer]:
+            - img [ref=e247]
+            - text: Import
+          - button "Reindex" [ref=e248] [cursor=pointer]:
+            - img [ref=e249]
+            - text: Reindex
+          - generic [ref=e254]: ready
+      - generic [ref=e255]:
+        - generic [ref=e256]:
+          - generic [ref=e257]:
+            - heading "File tree" [level=2] [ref=e258]:
+              - img [ref=e259]
+              - text: File tree
+            - generic [ref=e261]: 4 items
+          - generic [ref=e262]:
+            - generic [ref=e263]:
+              - img [ref=e264]
+              - searchbox "Filter Knowledge file tree" [ref=e267]
+            - button "全文搜索" [ref=e268] [cursor=pointer]
+          - generic [ref=e269]:
+            - button "桌面壳导航与全局体验 md" [ref=e270] [cursor=pointer]:
+              - img [ref=e271]
+              - generic [ref=e274]: 桌面壳导航与全局体验
+              - generic [ref=e275]: md
+            - button "知识库详细需求 md" [ref=e276] [cursor=pointer]:
+              - img [ref=e277]
+              - generic [ref=e280]: 知识库详细需求
+              - generic [ref=e281]: md
+            - button "数据模型与存储边界 md" [ref=e282] [cursor=pointer]:
+              - img [ref=e283]
+              - generic [ref=e286]: 数据模型与存储边界
+              - generic [ref=e287]: md
+            - button "安全权限错误处理 md" [ref=e288] [cursor=pointer]:
+              - img [ref=e289]
+              - generic [ref=e292]: 安全权限错误处理
+              - generic [ref=e293]: md
+        - generic [ref=e294]:
+          - generic [ref=e295]:
+            - heading "Reader" [level=2] [ref=e296]:
+              - img [ref=e297]
+              - text: Reader
+            - generic [ref=e299]: no file open
+          - group "Reader mode" [ref=e301]:
+            - button "Markdown" [ref=e302] [cursor=pointer]
+            - button "Raw" [ref=e303] [cursor=pointer]
+          - generic [ref=e305]:
+            - strong [ref=e306]: Select a file to read
+            - generic [ref=e307]: Use the file tree or full-text results to open a source.
+        - generic [ref=e308]:
+          - generic [ref=e309]:
+            - heading "Inspector" [level=2] [ref=e310]:
+              - img [ref=e311]
+              - text: Inspector
+            - generic [ref=e314]: reader
+          - generic [ref=e315]:
+            - strong [ref=e316]: No file selected
+            - generic [ref=e317]: Open a file to inspect metadata and attach context.
+          - button "Attach" [disabled] [ref=e318] [cursor=pointer]:
+            - img [ref=e319]
+            - text: Attach
+          - group [ref=e322]:
+            - generic "Index Health" [ref=e323] [cursor=pointer]:
+              - img [ref=e324]
+              - text: Index Health

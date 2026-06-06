@@ -198,15 +198,46 @@ export function buildAgentChatMessage(input = {}) {
     return null;
   }
 
+  const citations = sanitizeAgentCitations(input.metadata?.citations);
+
   return {
     content: text,
     id: firstString(input.id, input.messageId),
+    ...(citations.length > 0 ? { metadata: { citations } } : {}),
     role,
     source: firstString(input.source) || "local",
     status: firstString(input.status, input.state) || "recorded",
     text,
     time: redactAgentText(firstString(input.time, input.at, input.updatedAt)),
   };
+}
+
+function sanitizeAgentCitations(citations = []) {
+  return (Array.isArray(citations) ? citations : []).slice(0, 8).map((citation, index) => {
+    if (!citation || typeof citation !== "object") {
+      return null;
+    }
+
+    const title = redactAgentText(firstString(citation.title, citation.label, citation.relativePath));
+    const preview = redactAgentText(firstString(citation.preview, citation.excerpt, citation.summary));
+    const relativePath = redactAgentText(firstString(citation.relativePath, citation.path));
+
+    if (!title && !preview && !relativePath) {
+      return null;
+    }
+
+    return {
+      ...(firstString(citation.chunkId) ? { chunkId: redactAgentText(citation.chunkId) } : {}),
+      ...(firstString(citation.documentId) ? { documentId: redactAgentText(citation.documentId) } : {}),
+      ...(firstString(citation.matchType) ? { matchType: redactAgentText(citation.matchType) } : {}),
+      ...(preview ? { preview } : {}),
+      ...(relativePath ? { relativePath } : {}),
+      ...(Number.isFinite(citation.score) ? { score: citation.score } : {}),
+      sourceRefId: redactAgentText(firstString(citation.sourceRefId)) || `S${index + 1}`,
+      sourceType: redactAgentText(firstString(citation.sourceType, citation.type, citation.source)) || "knowledge",
+      title: title || relativePath || `Source ${index + 1}`,
+    };
+  }).filter(Boolean);
 }
 
 export function buildAgentContextItem(input = {}) {

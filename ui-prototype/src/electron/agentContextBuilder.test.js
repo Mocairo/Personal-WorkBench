@@ -163,6 +163,78 @@ describe("agent context builder", () => {
     expect(result.contextSummary.trimmed.contextItems).toBeGreaterThan(0);
   });
 
+  it("builds bounded source refs from attached knowledge and kb.searchLocal results", () => {
+    const result = buildAgentLlmContext(baseInput({
+      attachedKnowledgeContexts: [
+        {
+          chunkId: "chunk-attached-1",
+          contextId: "doc-attached:chunk-attached-1",
+          documentId: "doc-attached",
+          matchType: "attached",
+          preview: "Pinned source preview with apiKey=sk-attached-source and D:\\private\\vault\\pin.md",
+          relativePath: "notes/pinned.md",
+          score: 8.75,
+          sourceType: "knowledge",
+          status: "attached",
+          title: "Pinned Source",
+        },
+      ],
+      contextPack: { items: [] },
+      sourceSummaries: [],
+      toolResultsSummary: [
+        {
+          label: "Knowledge Search",
+          sourceRefs: [
+            {
+              chunkId: "chunk-tool-1",
+              documentId: "doc-tool",
+              matchType: "hybrid",
+              preview: "Tool result preview with token=sk-tool-source.",
+              relativePath: "docs/tool.md",
+              score: 0.92,
+              sourceType: "knowledge",
+              title: "Tool Source",
+            },
+          ],
+          status: "completed",
+          summary: "Knowledge Search: Tool Source",
+          toolId: "kb.searchLocal",
+        },
+      ],
+    }), {
+      maxChars: 4000,
+      maxItems: 6,
+      maxMessages: 2,
+      maxSectionChars: 240,
+    });
+
+    const promptText = allMessageText(result);
+    expect(result.contextSummary.sourceRefs).toEqual([
+      expect.objectContaining({
+        chunkId: "chunk-tool-1",
+        documentId: "doc-tool",
+        matchType: "hybrid",
+        relativePath: "docs/tool.md",
+        sourceRefId: "S1",
+        sourceType: "knowledge",
+        title: "Tool Source",
+      }),
+      expect.objectContaining({
+        chunkId: "chunk-attached-1",
+        documentId: "doc-attached",
+        matchType: "attached",
+        relativePath: "notes/pinned.md",
+        sourceRefId: "S2",
+        sourceType: "knowledge",
+        title: "Pinned Source",
+      }),
+    ]);
+    expect(promptText).toContain("Source References");
+    expect(promptText).toContain("[S1] Tool Source");
+    expect(promptText).toContain("[S2] Pinned Source");
+    expect(JSON.stringify(result)).not.toMatch(/sk-attached-source|sk-tool-source|apiKey|token=|D:\\private/i);
+  });
+
   it("redacts secrets and raw Windows paths from prompt messages and summary", () => {
     const result = buildAgentLlmContext(baseInput({
       contextPack: {

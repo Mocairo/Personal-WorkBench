@@ -67,6 +67,38 @@ describe("knowledge index search", () => {
     expect(JSON.stringify(result)).not.toMatch(/sk-search-secret|token=|D:\\private/);
   });
 
+  it("matches useful query words instead of requiring the full question string", () => {
+    const index = {
+      chunks: [
+        {
+          chunkId: "doc-1:chunk-0",
+          documentId: "doc-1",
+          preview: "Context Builder should cite indexed needle chunks.",
+          relativePath: "rag.md",
+          title: "RAG notes",
+        },
+      ],
+      documents: [
+        { id: "doc-1", relativePath: "rag.md", title: "RAG notes", type: "md" },
+      ],
+      status: "ready",
+    };
+
+    const result = searchKnowledgeIndex(index, {
+      query: "search docs for indexed needle",
+    });
+
+    expect(result).toMatchObject({
+      results: [
+        expect.objectContaining({
+          chunkId: "doc-1:chunk-0",
+          relativePath: "rag.md",
+        }),
+      ],
+      total: 1,
+    });
+  });
+
   it("returns an unindexed status when no usable index is present", () => {
     const result = searchKnowledgeIndex({ chunks: [], documents: [], status: "missing" }, { query: "needle" });
 

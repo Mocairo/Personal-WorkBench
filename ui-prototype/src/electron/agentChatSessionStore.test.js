@@ -5,7 +5,10 @@ import { describe, expect, it } from "vitest";
 import {
   appendAgentChatSessionTurn,
   getAgentChatUserDataSessionPath,
+  listAgentChatUserDataSessionHistory,
   readAgentChatUserDataSession,
+  restoreAgentChatUserDataSession,
+  resetAgentChatUserDataSession,
 } from "./agentChatSessionStore";
 
 describe("agent chat userData session store", () => {
@@ -102,6 +105,121 @@ describe("agent chat userData session store", () => {
       ok: true,
       sessionPath,
     });
+  });
+
+  it("resets Agent Chat to an empty app-owned userData session", async () => {
+    const userDataDir = await fs.mkdtemp(path.join(os.tmpdir(), "agent-chat-reset-user-data-"));
+
+    await appendAgentChatSessionTurn(
+      {
+        assistantMessage: {
+          role: "assistant",
+          text: "Old answer token=sk-old-answer",
+        },
+        userMessage: {
+          role: "user",
+          text: "Old question apiKey=sk-old-user",
+        },
+      },
+      { userDataDir },
+    );
+
+    const result = await resetAgentChatUserDataSession({ userDataDir });
+    const persisted = await fs.readFile(getAgentChatUserDataSessionPath({ userDataDir }), "utf8");
+    const parsed = JSON.parse(persisted);
+
+    expect(result).toMatchObject({
+      messageCount: 0,
+      status: "reset",
+    });
+    expect(parsed).toMatchObject({
+      chatMessages: [],
+      contextItems: [],
+      session: {
+        id: "agent-chat-session",
+        messageCount: 0,
+        source: "userData",
+        status: "ready",
+      },
+      toolCalls: [],
+    });
+    expect(persisted).not.toMatch(/sk-old|apiKey|token=/);
+  });
+
+  it("archives the previous chat on reset and can restore it from history", async () => {
+    const userDataDir = await fs.mkdtemp(path.join(os.tmpdir(), "agent-chat-history-user-data-"));
+
+    await appendAgentChatSessionTurn(
+      {
+        assistantMessage: {
+          role: "assistant",
+          text: "Old answer token=sk-history-answer",
+        },
+        createdAt: "2026-06-04T14:00:00.000Z",
+        userMessage: {
+          role: "user",
+          text: "我的论文模板里都有什么",
+        },
+      },
+      { userDataDir },
+    );
+
+    const reset = await resetAgentChatUserDataSession({ userDataDir });
+    expect(reset.history).toEqual([
+      expect.objectContaining({
+        messageCount: 2,
+        title: "我的论文模板里都有什么",
+      }),
+    ]);
+
+    const restored = await restoreAgentChatUserDataSession(
+      { sessionId: reset.history[0].sessionId },
+      { userDataDir },
+    );
+    const current = await readAgentChatUserDataSession({ userDataDir });
+    const serialized = JSON.stringify(current.data);
+
+    expect(restored).toMatchObject({
+      messageCount: 2,
+      status: "restored",
+    });
+    expect(current.data.chatMessages).toEqual([
+      expect.objectContaining({ role: "user", text: "我的论文模板里都有什么" }),
+      expect.objectContaining({ role: "assistant", text: "Old answer [redacted]" }),
+    ]);
+    expect(serialized).not.toMatch(/sk-history-answer|token=/);
+  });
+
+  it("keeps multiple reset chats in recent history instead of replacing the last one", async () => {
+    const userDataDir = await fs.mkdtemp(path.join(os.tmpdir(), "agent-chat-multiple-history-"));
+
+    await appendAgentChatSessionTurn(
+      {
+        assistantMessage: { role: "assistant", text: "First answer" },
+        createdAt: "2026-06-04T10:00:00.000Z",
+        userMessage: { role: "user", text: "First question" },
+      },
+      { userDataDir },
+    );
+    await resetAgentChatUserDataSession({ now: "2026-06-04T10:05:00.000Z", userDataDir });
+
+    await appendAgentChatSessionTurn(
+      {
+        assistantMessage: { role: "assistant", text: "Second answer" },
+        createdAt: "2026-06-04T11:00:00.000Z",
+        userMessage: { role: "user", text: "Second question" },
+      },
+      { userDataDir },
+    );
+    const reset = await resetAgentChatUserDataSession({ now: "2026-06-04T11:05:00.000Z", userDataDir });
+    const history = await listAgentChatUserDataSessionHistory({ userDataDir });
+
+    expect(reset.history).toHaveLength(2);
+    expect(history.sessions).toEqual([
+      expect.objectContaining({ preview: "Second answer", title: "Second question" }),
+      expect.objectContaining({ preview: "First answer", title: "First question" }),
+    ]);
+    expect(new Set(history.sessions.map((session) => session.sessionId)).size).toBe(2);
   });
 
   it("persists sanitized tool timeline details without secrets or large raw payloads", async () => {
@@ -305,5 +423,82 @@ describe("agent chat userData session store", () => {
       ],
     });
     expect(persisted).not.toMatch(/sk-|apiKey|token|secret|Authorization|requestHeaders|D:\\private/i);
+  });
+
+  it("persists assistant citation metadata and source refs without unsafe payloads", async () => {
+    const userDataDir = await fs.mkdtemp(path.join(os.tmpdir(), "agent-chat-citation-session-"));
+
+    await appendAgentChatSessionTurn(
+      {
+        assistantMessage: {
+          metadata: {
+            citations: [
+              {
+                chunkId: "chunk-1",
+                documentId: "doc-1",
+                matchType: "hybrid",
+                preview: "Preview token=sk-citation-secret D:\\private\\vault\\doc.md",
+                relativePath: "notes/doc.md",
+                score: 0.91,
+                sourceRefId: "S1",
+                sourceType: "knowledge",
+                title: "Doc Source apiKey=sk-title-secret",
+              },
+            ],
+            model: "gpt-4.1-mini",
+            provider: "openai",
+          },
+          role: "assistant",
+          text: "Answer without inline markers.",
+        },
+        contextSummary: {
+          sourceRefs: [
+            {
+              chunkId: "chunk-1",
+              documentId: "doc-1",
+              matchType: "hybrid",
+              preview: "Preview token=sk-context-source-secret",
+              relativePath: "notes/doc.md",
+              sourceRefId: "S1",
+              sourceType: "knowledge",
+              title: "Doc Source",
+            },
+          ],
+          usedContextItems: [],
+          usedHistoryCount: 0,
+          usedToolResults: [],
+        },
+        createdAt: "2026-06-04T13:00:00.000Z",
+        userMessage: {
+          role: "user",
+          text: "Use source refs.",
+        },
+      },
+      { userDataDir },
+    );
+
+    const persisted = await fs.readFile(getAgentChatUserDataSessionPath({ userDataDir }), "utf8");
+    const parsed = JSON.parse(persisted);
+
+    expect(parsed.chatMessages.at(-1).metadata.citations).toEqual([
+      expect.objectContaining({
+        chunkId: "chunk-1",
+        documentId: "doc-1",
+        matchType: "hybrid",
+        preview: "Preview [redacted] [redacted-path]",
+        relativePath: "notes/doc.md",
+        score: 0.91,
+        sourceRefId: "S1",
+        sourceType: "knowledge",
+        title: "Doc Source [redacted]",
+      }),
+    ]);
+    expect(parsed.contextSummary.sourceRefs).toEqual([
+      expect.objectContaining({
+        sourceRefId: "S1",
+        title: "Doc Source",
+      }),
+    ]);
+    expect(persisted).not.toMatch(/sk-|apiKey|token=|secret|Authorization|requestHeaders|D:\\private/i);
   });
 });

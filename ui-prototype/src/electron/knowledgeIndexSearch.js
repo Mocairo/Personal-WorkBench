@@ -22,23 +22,58 @@ function normalizeQuery(value) {
   return cleanString(value).toLowerCase();
 }
 
-function scoreChunk(chunk = {}, document = {}, query = "") {
-  const title = cleanString(chunk.title || document.title).toLowerCase();
-  const relativePath = cleanString(chunk.relativePath || document.relativePath).toLowerCase();
-  const preview = cleanString(chunk.preview).toLowerCase();
-  let score = 0;
+function uniqueValues(values = []) {
+  return [...new Set(values.map(cleanString).filter(Boolean))];
+}
 
-  if (title.includes(query)) {
-    score += 4;
+function tokenizeQuery(query = "") {
+  const normalized = normalizeQuery(query);
+  const asciiWords = normalized
+    .match(/[a-z0-9][a-z0-9_-]{1,}/g) ?? [];
+  const cjkText = (normalized.match(/[\u3400-\u9fff]+/g) ?? []).join("");
+  const cjkFragments = [];
+
+  for (let index = 0; index < cjkText.length - 1; index += 1) {
+    cjkFragments.push(cjkText.slice(index, index + 2));
   }
-  if (relativePath.includes(query)) {
-    score += 2;
+  for (let index = 0; index < cjkText.length - 2; index += 1) {
+    cjkFragments.push(cjkText.slice(index, index + 3));
   }
-  if (preview.includes(query)) {
-    score += 1;
+
+  return uniqueValues([
+    normalized,
+    ...asciiWords,
+    ...cjkFragments,
+  ]).filter((token) => token.length >= 2);
+}
+
+function fieldScore(value = "", tokens = [], weight = 1, exactQuery = "") {
+  const text = cleanString(value).toLowerCase();
+  if (!text) {
+    return 0;
+  }
+
+  let score = exactQuery && text.includes(exactQuery) ? weight * 4 : 0;
+  for (const token of tokens) {
+    if (token !== exactQuery && text.includes(token)) {
+      score += weight;
+    }
   }
 
   return score;
+}
+
+function scoreChunk(chunk = {}, document = {}, query = "", queryTokens = tokenizeQuery(query)) {
+  const title = cleanString(chunk.title || document.title).toLowerCase();
+  const relativePath = cleanString(chunk.relativePath || document.relativePath).toLowerCase();
+  const preview = cleanString(chunk.preview).toLowerCase();
+  const exactQuery = normalizeQuery(query);
+
+  return (
+    fieldScore(title, queryTokens, 4, exactQuery) +
+    fieldScore(relativePath, queryTokens, 2, exactQuery) +
+    fieldScore(preview, queryTokens, 1, exactQuery)
+  );
 }
 
 function buildDocumentLookup(documents = []) {
@@ -112,10 +147,11 @@ export function searchKnowledgeIndex(indexInput = {}, options = {}) {
   }
 
   const documentsById = buildDocumentLookup(index.documents);
+  const queryTokens = tokenizeQuery(normalizedQuery);
   const matches = index.chunks
     .map((chunk) => {
       const document = documentsById.get(chunk.documentId) ?? {};
-      const keywordScore = scoreChunk(chunk, document, normalizedQuery);
+      const keywordScore = scoreChunk(chunk, document, normalizedQuery, queryTokens);
       const vectorScore = semanticReady
         ? cosineSimilarity(queryEmbedding, vectorsByChunkId.get(chunk.chunkId))
         : 0;

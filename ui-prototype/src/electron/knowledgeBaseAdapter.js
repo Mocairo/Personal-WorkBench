@@ -1,7 +1,12 @@
 import fs from "node:fs/promises";
 import path from "node:path";
 import { buildKnowledgeIndexFromRoot } from "./knowledgeIndexBuilder.js";
-import { readKnowledgeIndex, writeKnowledgeIndex } from "./knowledgeIndexStore.js";
+import {
+  limitKnowledgeIndexText,
+  readKnowledgeIndex,
+  redactKnowledgeIndexText,
+  writeKnowledgeIndex,
+} from "./knowledgeIndexStore.js";
 import { searchKnowledgeIndex } from "./knowledgeIndexSearch.js";
 import {
   embedTexts as defaultEmbedTexts,
@@ -24,15 +29,20 @@ import {
   createKnowledgeDocumentId,
 } from "../shared/knowledgeContracts.js";
 
-const DOCUMENT_EXTENSIONS = new Set([".md", ".markdown", ".txt", ".json", ".yaml", ".yml", ".csv", ".pdf", ".puml"]);
+const DOCUMENT_EXTENSIONS = new Set([".md", ".markdown", ".txt", ".json", ".yaml", ".yml", ".csv", ".pdf", ".docx", ".puml"]);
 const TEXT_EXTENSIONS = new Set([".md", ".markdown", ".txt", ".json", ".yaml", ".yml", ".csv", ".puml"]);
-const METADATA_ONLY_EXTENSIONS = new Set([".pdf"]);
-const IGNORED_DIRECTORIES = new Set([".git", "node_modules", "dist", "build"]);
+const METADATA_ONLY_EXTENSIONS = new Set([".pdf", ".docx"]);
+const IGNORED_DIRECTORIES = new Set([".git", "node_modules", "dist", "build", "coverage", "out", "temp", "tmp"]);
+const IGNORED_FILE_NAMES = new Set([".env", ".ds_store", "thumbs.db"]);
+const IGNORED_FILE_EXTENSIONS = new Set([".bak", ".log", ".swp", ".temp", ".tmp"]);
 const DEFAULT_MAX_DOCUMENTS = 200;
 const DEFAULT_MAX_FILE_SIZE_BYTES = 512 * 1024;
+const DEFAULT_MAX_TREE_ENTRIES = 1000;
+const DEFAULT_MAX_READER_CHARS = 12 * 1024;
 const DEFAULT_EMBEDDING_BATCH_SIZE = 8;
 const TAGS_BY_EXTENSION = {
   ".csv": "csv",
+  ".docx": "docx",
   ".json": "json",
   ".markdown": "markdown",
   ".md": "markdown",
@@ -42,6 +52,10 @@ const TAGS_BY_EXTENSION = {
   ".yaml": "yaml",
   ".yml": "yaml",
 };
+
+function cleanString(value) {
+  return typeof value === "string" ? value.trim() : "";
+}
 
 async function pathExists(targetPath) {
   try {
@@ -54,6 +68,35 @@ async function pathExists(targetPath) {
 
 function normalizeRelativePath(relativePath) {
   return relativePath.split(path.sep).join("/");
+}
+
+function normalizeRelativePathInput(relativePath = "") {
+  return cleanString(relativePath).replace(/\\/g, "/").replace(/^\/+/, "");
+}
+
+function hasTraversalSegment(relativePath = "") {
+  return normalizeRelativePathInput(relativePath).split("/").some((segment) => segment === "..");
+}
+
+function resolveSafeRelativePath(rootDir = "", relativePath = "") {
+  const normalized = normalizeRelativePathInput(relativePath);
+
+  if (!rootDir || !normalized || path.isAbsolute(relativePath) || hasTraversalSegment(normalized)) {
+    return null;
+  }
+
+  const resolvedRoot = path.resolve(rootDir);
+  const resolvedPath = path.resolve(resolvedRoot, ...normalized.split("/"));
+  const relativeToRoot = path.relative(resolvedRoot, resolvedPath);
+
+  if (!relativeToRoot || relativeToRoot.startsWith("..") || path.isAbsolute(relativeToRoot)) {
+    return null;
+  }
+
+  return {
+    absolutePath: resolvedPath,
+    relativePath: normalizeRelativePath(relativeToRoot),
+  };
 }
 
 function getType(extension) {
@@ -69,11 +112,36 @@ function getTag(extension) {
 }
 
 function isIgnoredDirectory(name) {
-  return name.startsWith(".") || IGNORED_DIRECTORIES.has(name);
+  return name.startsWith(".") || IGNORED_DIRECTORIES.has(name.toLowerCase());
 }
 
 function isIgnoredFile(name) {
-  return name.startsWith(".") || name.toLowerCase() === ".env";
+  const lowerName = name.toLowerCase();
+  return (
+    name.startsWith(".") ||
+    name.endsWith("~") ||
+    lowerName.startsWith("~$") ||
+    IGNORED_FILE_NAMES.has(lowerName) ||
+    IGNORED_FILE_EXTENSIONS.has(path.extname(lowerName))
+  );
+}
+
+function isReadableExtension(extension = "") {
+  return TEXT_EXTENSIONS.has(extension);
+}
+
+function isDocumentExtension(extension = "") {
+  return DOCUMENT_EXTENSIONS.has(extension);
+}
+
+function getReaderMessage(extension = "") {
+  if (extension === ".pdf") {
+    return "PDF metadata only. Text extraction is not enabled in this phase.";
+  }
+  if (extension === ".docx") {
+    return "DOCX metadata only. Text extraction is not enabled in this phase.";
+  }
+  return "Preview unavailable for this file type.";
 }
 
 function normalizePreview(content) {
@@ -543,6 +611,7 @@ function getEmptyKnowledgeData(status = "missing") {
 
   return {
     chunkPreviews: [],
+    fileTree: buildEmptyKnowledgeFileTree(status),
     graphNodes: ["No docs"],
     indexStats,
     knowledgeDocuments: [],
@@ -557,6 +626,282 @@ function getEmptyKnowledgeData(status = "missing") {
     ],
     scanSummary,
   };
+}
+
+function buildEmptyKnowledgeFileTree(status = "missing") {
+  return {
+    root: {
+      children: [],
+      id: "knowledge-base-root",
+      name: "Knowledge Base",
+      readable: false,
+      relativePath: "",
+      type: "folder",
+    },
+    source: "local",
+    status,
+    summary: {
+      errors: 0,
+      files: 0,
+      folders: 0,
+      skipped: 0,
+    },
+    total: 0,
+  };
+}
+
+function sortTreeNodes(nodes = []) {
+  return [...nodes].sort((left, right) => {
+    if (left.type !== right.type) {
+      return left.type === "folder" ? -1 : 1;
+    }
+    return left.name.localeCompare(right.name);
+  });
+}
+
+function buildFolderNode(relativePath = "", children = []) {
+  const name = relativePath ? relativePath.split("/").pop() : "Knowledge Base";
+
+  return {
+    children,
+    id: relativePath ? `kb-folder-${createKnowledgeDocumentId(relativePath).replace(/^kb-/, "")}` : "knowledge-base-root",
+    name,
+    readable: false,
+    relativePath,
+    type: "folder",
+  };
+}
+
+function buildFileTreeNode(relativePath = "", stat = null) {
+  const extension = path.extname(relativePath).toLowerCase();
+  const type = getType(extension);
+
+  return {
+    ext: type,
+    id: createKnowledgeDocumentId(relativePath),
+    name: relativePath.split("/").pop() || relativePath,
+    readable: isReadableExtension(extension),
+    relativePath,
+    size: Number.isFinite(stat?.size) ? stat.size : 0,
+    type: "file",
+    updatedAt: stat?.mtime?.toISOString?.() ?? null,
+  };
+}
+
+export async function getKnowledgeFileTree(options = {}) {
+  const rootDir = options.rootDir ?? process.env.KNOWLEDGE_BASE_ROOT ?? path.resolve("docs");
+  const exists = await pathExists(rootDir);
+
+  if (!exists) {
+    return buildEmptyKnowledgeFileTree("missing");
+  }
+
+  const rootStat = await fs.stat(rootDir).catch(() => null);
+  if (!rootStat?.isDirectory()) {
+    return buildEmptyKnowledgeFileTree("missing");
+  }
+
+  const maxEntries = Math.max(1, options.maxTreeEntries ?? DEFAULT_MAX_TREE_ENTRIES);
+  const summary = {
+    errors: 0,
+    files: 0,
+    folders: 0,
+    skipped: 0,
+  };
+  let entryCount = 0;
+
+  async function walk(dirPath) {
+    let entries = [];
+    try {
+      entries = await fs.readdir(dirPath, { withFileTypes: true });
+    } catch {
+      summary.errors += 1;
+      return [];
+    }
+
+    const nodes = [];
+
+    for (const entry of entries) {
+      if (entryCount >= maxEntries) {
+        summary.skipped += 1;
+        continue;
+      }
+
+      const entryPath = path.join(dirPath, entry.name);
+      const relativePath = normalizeRelativePath(path.relative(rootDir, entryPath));
+
+      if (entry.isDirectory()) {
+        if (isIgnoredDirectory(entry.name)) {
+          summary.skipped += 1;
+          continue;
+        }
+
+        entryCount += 1;
+        summary.folders += 1;
+        nodes.push(buildFolderNode(relativePath, await walk(entryPath)));
+        continue;
+      }
+
+      if (isIgnoredFile(entry.name)) {
+        summary.skipped += 1;
+        continue;
+      }
+
+      const extension = path.extname(entry.name).toLowerCase();
+      if (!isDocumentExtension(extension)) {
+        summary.skipped += 1;
+        continue;
+      }
+
+      entryCount += 1;
+      summary.files += 1;
+      const stat = await fs.stat(entryPath).catch(() => {
+        summary.errors += 1;
+        return null;
+      });
+      nodes.push(buildFileTreeNode(relativePath, stat));
+    }
+
+    return sortTreeNodes(nodes);
+  }
+
+  const children = await walk(rootDir);
+
+  return {
+    root: buildFolderNode("", children),
+    source: "local",
+    status: summary.errors > 0 ? "partial" : "ready",
+    summary,
+    total: summary.files + summary.folders,
+  };
+}
+
+function getMissingDocumentPreview(input = {}) {
+  return {
+    id: cleanString(input.id ?? input.documentId),
+    message: "Document not found",
+    readable: false,
+    source: "local",
+    status: "missing",
+  };
+}
+
+function getDocumentChunkPreviews(document = {}, preview = "", source = "local") {
+  if (!preview) {
+    return [];
+  }
+
+  return [
+    buildKnowledgeChunkPreview({
+      documentId: document.id,
+      preview,
+      relativePath: document.relativePath,
+      source,
+      title: document.title,
+    }),
+  ];
+}
+
+async function readKnowledgeDocumentPreviewFromRelativePath(options = {}) {
+  const rootDir = options.rootDir ?? process.env.KNOWLEDGE_BASE_ROOT ?? path.resolve("docs");
+  const safePath = resolveSafeRelativePath(rootDir, options.relativePath ?? options.path);
+
+  if (!safePath) {
+    return getMissingDocumentPreview(options);
+  }
+
+  const stat = await fs.stat(safePath.absolutePath).catch(() => null);
+  if (!stat?.isFile()) {
+    return getMissingDocumentPreview(options);
+  }
+
+  const extension = path.extname(safePath.relativePath).toLowerCase();
+  if (!isDocumentExtension(extension)) {
+    return getMissingDocumentPreview(options);
+  }
+
+  const type = getType(extension);
+  const readable = isReadableExtension(extension);
+  const title = safePath.relativePath.split("/").pop() || safePath.relativePath;
+  const updatedAt = stat.mtime?.toISOString?.() ?? null;
+
+  if (!readable) {
+    const message = getReaderMessage(extension);
+    return {
+      ...buildKnowledgeDocument({
+        chunks: 0,
+        id: createKnowledgeDocumentId(safePath.relativePath),
+        inferredTags: [getTag(extension)],
+        message,
+        preview: message,
+        relativePath: safePath.relativePath,
+        size: stat.size,
+        source: "local",
+        status: "metadata-only",
+        title,
+        type,
+        updatedAt,
+      }),
+      chunkPreviews: [],
+      content: "",
+      message,
+      readable: false,
+      truncated: false,
+    };
+  }
+
+  try {
+    const rawContent = await fs.readFile(safePath.absolutePath, "utf8");
+    const redactedContent = redactKnowledgeIndexText(rawContent);
+    const maxContentChars = Math.max(80, options.maxContentChars ?? DEFAULT_MAX_READER_CHARS);
+    const content = limitKnowledgeIndexText(redactedContent, maxContentChars);
+    const truncated = redactedContent.length > maxContentChars;
+    const preview = normalizePreview(redactedContent);
+    const document = buildKnowledgeDocument({
+      chunks: preview ? 1 : 0,
+      id: createKnowledgeDocumentId(safePath.relativePath),
+      inferredTags: [getTag(extension)],
+      preview,
+      relativePath: safePath.relativePath,
+      size: stat.size,
+      source: "local",
+      status: "ready",
+      title,
+      type,
+      updatedAt,
+    });
+
+    return {
+      ...document,
+      chunkPreviews: getDocumentChunkPreviews(document, preview),
+      content,
+      readable: true,
+      truncated,
+    };
+  } catch {
+    const message = "Could not read document content";
+    return {
+      ...buildKnowledgeDocument({
+        chunks: 0,
+        id: createKnowledgeDocumentId(safePath.relativePath),
+        inferredTags: [getTag(extension)],
+        message,
+        preview: "",
+        relativePath: safePath.relativePath,
+        size: stat.size,
+        source: "local",
+        status: "error",
+        title,
+        type,
+        updatedAt,
+      }),
+      chunkPreviews: [],
+      content: "",
+      message,
+      readable: false,
+      truncated: false,
+    };
+  }
 }
 
 function toSearchExcerpt(document, query) {
@@ -588,7 +933,10 @@ export async function getKnowledgeBaseData(options = {}) {
     const index = await readKnowledgeIndex(options);
     if (index.status !== "missing" && index.documents.length > 0) {
       const vectorCache = await readKnowledgeVectors(options);
-      return buildDataFromIndex(index, vectorCache);
+      return {
+        ...buildDataFromIndex(index, vectorCache),
+        fileTree: await getKnowledgeFileTree({ ...options, rootDir }),
+      };
     }
   }
 
@@ -614,6 +962,7 @@ export async function getKnowledgeBaseData(options = {}) {
         source: "local",
         title: doc.title,
       })),
+    fileTree: await getKnowledgeFileTree({ ...options, rootDir }),
     graphNodes: buildGraphNodes(sortedDocuments, directories),
     indexStats: buildIndexStats(sortedDocuments),
     knowledgeDocuments: sortedDocuments,
@@ -738,42 +1087,73 @@ export async function searchKnowledgeLocal(options = {}) {
 }
 
 export async function getKnowledgeDocumentPreview(options = {}) {
-  const id = typeof options.id === "string" ? options.id : "";
+  const input = typeof options === "string" ? { id: options } : options;
+  const id = cleanString(input.id ?? input.documentId);
+  const requestedRelativePath = cleanString(input.relativePath ?? input.path);
 
-  if (options.userDataDir) {
-    const index = await readKnowledgeIndex(options);
-    const document = index.documents.find((doc) => doc.id === id);
+  if (requestedRelativePath) {
+    return readKnowledgeDocumentPreviewFromRelativePath(input);
+  }
+
+  if (input.userDataDir) {
+    const index = await readKnowledgeIndex(input);
+    const document = index.documents.find((doc) => doc.id === id || doc.documentId === id);
     if (document) {
+      const chunkPreviews = index.chunks
+        .filter((chunk) => chunk.documentId === id)
+        .slice(0, 6)
+        .map((chunk) => buildKnowledgeChunkPreview({
+          chunkId: chunk.chunkId,
+          documentId: id,
+          preview: chunk.preview,
+          relativePath: chunk.relativePath,
+          source: "knowledge-index",
+          title: chunk.title,
+        }));
+      const directPreview = document.relativePath
+        ? await readKnowledgeDocumentPreviewFromRelativePath({
+            ...input,
+            relativePath: document.relativePath,
+          })
+        : null;
+
+      if (directPreview?.status && directPreview.status !== "missing") {
+        return {
+          ...directPreview,
+          chunkPreviews,
+          source: "knowledge-index",
+        };
+      }
+
       return {
         ...buildKnowledgeDocument({
           ...document,
           source: "knowledge-index",
         }),
-        chunkPreviews: index.chunks
-          .filter((chunk) => chunk.documentId === id)
-          .slice(0, 6)
-          .map((chunk) => buildKnowledgeChunkPreview({
-            chunkId: chunk.chunkId,
-            documentId: id,
-            preview: chunk.preview,
-            relativePath: chunk.relativePath,
-            source: "knowledge-index",
-            title: chunk.title,
-          })),
+        chunkPreviews,
+        content: "",
+        readable: document.status !== "metadata-only",
+        truncated: false,
       };
     }
   }
 
-  const data = await getKnowledgeBaseData(options);
-  const document = data.knowledgeDocuments.find((doc) => doc.id === id);
+  const data = await getKnowledgeBaseData(input);
+  const document = data.knowledgeDocuments.find((doc) => doc.id === id || doc.documentId === id);
 
   if (!document) {
-    return {
-      id,
-      message: "Document not found",
-      source: "local",
-      status: "missing",
-    };
+    return getMissingDocumentPreview({ ...input, id });
+  }
+
+  const directPreview = document.relativePath
+    ? await readKnowledgeDocumentPreviewFromRelativePath({
+        ...input,
+        relativePath: document.relativePath,
+      })
+    : null;
+
+  if (directPreview?.status && directPreview.status !== "missing") {
+    return directPreview;
   }
 
   return {
@@ -789,5 +1169,8 @@ export async function getKnowledgeDocumentPreview(options = {}) {
           }),
         ]
       : [],
+    content: "",
+    readable: document.status !== "metadata-only",
+    truncated: false,
   };
 }

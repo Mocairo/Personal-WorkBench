@@ -37,6 +37,18 @@ export const IPC_METHODS = [
   },
   {
     namespace: "agentChat",
+    method: "resetSession",
+    providerMethod: "resetAgentChatSession",
+    channel: "agentChat:session:reset",
+  },
+  {
+    namespace: "agentChat",
+    method: "restoreSession",
+    providerMethod: "restoreAgentChatSession",
+    channel: "agentChat:session:restore",
+  },
+  {
+    namespace: "agentChat",
     method: "sendMessage",
     providerMethod: "sendAgentChatMessage",
     channel: "agentChat:message:send",
@@ -161,6 +173,12 @@ export const IPC_METHODS = [
     method: "listDocuments",
     providerMethod: "listKnowledgeDocuments",
     channel: "kb:document:list",
+  },
+  {
+    namespace: "kb",
+    method: "listTree",
+    providerMethod: "listKnowledgeFileTree",
+    channel: "kb:fileTree:list",
   },
   {
     namespace: "kb",

@@ -75,11 +75,22 @@ export function usePageNavigation() {
     setSwitcherOpen(false);
   };
 
+  const navigateToPageId = (pageId) => {
+    const index = pages.findIndex((page) => page.id === pageId);
+    if (index < 0) {
+      return false;
+    }
+
+    confirmPage(index);
+    return true;
+  };
+
   return {
     activeIndex,
     activePage: pages[activeIndex],
     closeSwitcher,
     confirmPage,
+    navigateToPageId,
     openSwitcher,
     selectedIndex,
     selectedPage: pages[selectedIndex],

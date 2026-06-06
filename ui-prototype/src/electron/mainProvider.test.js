@@ -328,7 +328,7 @@ describe("main process data provider", () => {
     expect(JSON.stringify(result)).not.toMatch(/sk-main-draft|sk-hidden|apiKey|token=/);
   });
 
-  it("sends phase-9 Agent Chat text through LLM provider without executing tools", async () => {
+  it("sends phase-9 Agent Chat text through LLM provider with automatic Knowledge search", async () => {
     const llmClient = vi.fn(async (input) => ({
       data: {
         metadata: {
@@ -341,12 +341,8 @@ describe("main process data provider", () => {
       },
       ok: true,
     }));
-    const toolExecutor = vi.fn(() => {
-      throw new Error("tool execution should not run");
-    });
     const provider = createMainDataProvider({
       llmClient,
-      toolExecutor,
     });
 
     const result = await provider.sendAgentChatMessage({
@@ -369,9 +365,10 @@ describe("main process data provider", () => {
       status: "ready",
       toolCalls: [
         expect.objectContaining({
-          permission: "none",
-          state: "done",
-          title: "No tools executed",
+          permission: "Level 1 / read-only",
+          state: "completed",
+          title: "Knowledge Search",
+          toolId: "kb.searchLocal",
         }),
       ],
       userMessage: {
@@ -384,7 +381,6 @@ describe("main process data provider", () => {
       contextPack: { items: expect.any(Array) },
       userText: "Summarize workspace [redacted]",
     });
-    expect(toolExecutor).not.toHaveBeenCalled();
     expect(JSON.stringify(result)).not.toMatch(/sk-live-hidden|apiKey/);
   });
 
@@ -398,21 +394,25 @@ describe("main process data provider", () => {
         },
         ok: false,
       }),
-      toolExecutor: () => {
-        throw new Error("tool execution should not run");
-      },
     });
 
     await expect(provider.sendAgentChatMessage({ userText: "Hello" })).resolves.toMatchObject({
+      assistantMessage: {
+        role: "assistant",
+        status: "error",
+      },
       error: {
         code: "LLM_SECRET_MISSING",
         message: "LLM provider secret is not configured.",
       },
-      ok: false,
+      status: "error",
+      toolResultsSummary: [
+        expect.objectContaining({ toolId: "kb.searchLocal" }),
+      ],
     });
   });
 
-  it("streams phase-10 Agent Chat replies, persists the session in userData and never executes tools", async () => {
+  it("streams phase-10 Agent Chat replies, persists the session in userData and runs automatic Knowledge search", async () => {
     const userDataDir = await fs.mkdtemp(path.join(os.tmpdir(), "main-provider-stream-user-data-"));
     const events = [];
     const llmStreamClient = vi.fn(async (input, streamOptions) => {
@@ -454,12 +454,8 @@ describe("main process data provider", () => {
         ok: true,
       };
     });
-    const toolExecutor = vi.fn(() => {
-      throw new Error("tool execution should not run");
-    });
     const provider = createMainDataProvider({
       llmStreamClient,
-      toolExecutor,
       userDataDir,
     });
 
@@ -484,8 +480,9 @@ describe("main process data provider", () => {
       status: "ready",
       toolCalls: [
         expect.objectContaining({
-          permission: "none",
-          title: "No tools executed",
+          permission: "Level 1 / read-only",
+          title: "Knowledge Search",
+          toolId: "kb.searchLocal",
         }),
       ],
       userMessage: {
@@ -500,7 +497,6 @@ describe("main process data provider", () => {
       expect.objectContaining({ requestId: "stream-main-1", status: "done", text: "Streamed answer", type: "done" }),
     ]);
     expect(llmStreamClient).toHaveBeenCalledTimes(1);
-    expect(toolExecutor).not.toHaveBeenCalled();
 
     const persistedPath = path.join(userDataDir, "sessions", "agent-chat-session.json");
     const persisted = await fs.readFile(persistedPath, "utf8");
@@ -594,6 +590,9 @@ describe("main process data provider", () => {
 
     const result = await provider.sendAgentChatMessage({
       sessionId: "session-1",
+      toolPolicy: {
+        autoAllowKnowledgeSearch: false,
+      },
       userText: "search docs for settings",
     });
 
@@ -767,6 +766,56 @@ describe("main process data provider", () => {
       ],
     });
     expect(JSON.stringify(result)).not.toMatch(/sk-tool-hidden|apiKey|token=|secret=|Authorization/i);
+  });
+
+  it("keeps ambient preview context out of the real Agent Chat LLM prompt", async () => {
+    const llmClient = vi.fn(async () => ({
+      data: {
+        metadata: { model: "gpt-4.1-mini", provider: "openai", toolCalls: 1 },
+        role: "assistant",
+        text: "Focused answer.",
+      },
+      ok: true,
+    }));
+    const provider = createMainDataProvider({
+      llmClient,
+    });
+
+    const result = await provider.sendAgentChatMessage({
+      userText: "我的论文模板里都有什么",
+    });
+
+    const llmInput = llmClient.mock.calls[0][0];
+    const promptText = JSON.stringify(llmInput.messages);
+    expect(result.contextSummary.usedContextItems).not.toEqual(expect.arrayContaining([
+      expect.objectContaining({ title: "Repository" }),
+      expect.objectContaining({ sourceType: "intel" }),
+    ]));
+    expect(promptText).not.toContain("Repository");
+    expect(promptText).not.toContain("Local Intel");
+    expect(promptText).toContain("Tool Result Summaries");
+  });
+
+  it("does not expose raw model-emitted tool_call markup as the assistant answer", async () => {
+    const llmClient = vi.fn(async () => ({
+      data: {
+        metadata: { model: "gpt-4.1-mini", provider: "openai", toolCalls: 1 },
+        role: "assistant",
+        text: "<tool_call> <function=kb.searchLocal> <parameter=query>论文阅读模板</parameter> </function> </tool_call>",
+      },
+      ok: true,
+    }));
+    const provider = createMainDataProvider({
+      llmClient,
+    });
+
+    const result = await provider.sendAgentChatMessage({
+      userText: "需要",
+    });
+
+    expect(result.assistantMessage.text).not.toContain("<tool_call>");
+    expect(result.assistantMessage.text).not.toContain("<function=");
+    expect(result.assistantMessage.text).toContain("知识库");
   });
 
   it("auto-allows only Level 1 read-only tools and leaves Level 4 plans denied", async () => {
@@ -1235,7 +1284,25 @@ describe("main process data provider", () => {
     });
 
     expect(result).toMatchObject({
+      assistantMessage: {
+        metadata: {
+          citations: [
+            expect.objectContaining({
+              relativePath: "rag.md",
+              sourceRefId: "S1",
+              sourceType: "knowledge",
+            }),
+          ],
+        },
+      },
       contextSummary: {
+        sourceRefs: [
+          expect.objectContaining({
+            relativePath: "rag.md",
+            sourceRefId: "S1",
+            sourceType: "knowledge",
+          }),
+        ],
         usedToolResults: [
           expect.objectContaining({ sourceType: "tool", toolId: "kb.searchLocal" }),
         ],
@@ -1249,9 +1316,124 @@ describe("main process data provider", () => {
       ],
     });
     const llmInput = llmClient.mock.calls[0][0];
+    expect(JSON.stringify(llmInput.messages)).toContain("Source References");
+    expect(JSON.stringify(llmInput.messages)).toContain("[S1]");
     expect(JSON.stringify(llmInput.messages)).toContain("Tool Result Summaries");
     expect(JSON.stringify(llmInput.messages)).toContain("rag.md");
     expect(JSON.stringify({ llmInput, result })).not.toMatch(/D:\\|sk-|apiKey|Authorization/);
+  });
+
+  it("automatically searches indexed Knowledge for ordinary Agent Chat questions", async () => {
+    const rootDir = await fs.mkdtemp(path.join(os.tmpdir(), "main-provider-kb-auto-agent-"));
+    const docsRootDir = path.join(rootDir, "docs");
+    const localSourcesConfigPath = path.join(rootDir, "config", "local-sources.json");
+    const userDataDir = path.join(rootDir, "user-data");
+    await fs.mkdir(docsRootDir, { recursive: true });
+    await fs.mkdir(path.dirname(localSourcesConfigPath), { recursive: true });
+    await fs.writeFile(path.join(docsRootDir, "daily.md"), "# Daily\n\nNeedle phrase appears in local diary notes.\n");
+    await fs.writeFile(
+      localSourcesConfigPath,
+      JSON.stringify({
+        paths: {
+          knowledgeBasePath: docsRootDir,
+        },
+      }),
+    );
+    const llmClient = vi.fn(async () => ({
+      data: {
+        metadata: { model: "gpt-4.1-mini", provider: "openai", toolCalls: 1 },
+        role: "assistant",
+        text: "Auto searched answer.",
+      },
+      ok: true,
+    }));
+    const provider = createMainDataProvider({
+      llmClient,
+      localSourcesConfigPath,
+      userDataDir,
+    });
+    await provider.startKnowledgeIndex();
+
+    const result = await provider.sendAgentChatMessage({
+      userText: "Needle phrase 最近在什么日记里出现？",
+    });
+
+    expect(result).toMatchObject({
+      status: "ready",
+      toolCalls: [
+        expect.objectContaining({
+          state: "completed",
+          toolId: "kb.searchLocal",
+        }),
+      ],
+      toolResultsSummary: [
+        expect.objectContaining({
+          toolId: "kb.searchLocal",
+        }),
+      ],
+    });
+    expect(llmClient).toHaveBeenCalledTimes(1);
+    expect(JSON.stringify(llmClient.mock.calls[0][0].messages)).toContain("Tool Result Summaries");
+    expect(JSON.stringify(llmClient.mock.calls[0][0].messages)).toContain("daily.md");
+    expect(JSON.stringify({ result })).not.toMatch(/D:\\|sk-|apiKey|Authorization/);
+  });
+
+  it("resets Agent Chat userData session and attached Knowledge contexts for New Chat", async () => {
+    const rootDir = await fs.mkdtemp(path.join(os.tmpdir(), "main-provider-chat-reset-"));
+    const docsRootDir = path.join(rootDir, "docs");
+    const localSourcesConfigPath = path.join(rootDir, "config", "local-sources.json");
+    const userDataDir = path.join(rootDir, "user-data");
+    await fs.mkdir(docsRootDir, { recursive: true });
+    await fs.mkdir(path.dirname(localSourcesConfigPath), { recursive: true });
+    await fs.writeFile(path.join(docsRootDir, "reset.md"), "# Reset\n\nContext to clear.\n");
+    await fs.writeFile(
+      localSourcesConfigPath,
+      JSON.stringify({
+        paths: {
+          knowledgeBasePath: docsRootDir,
+        },
+      }),
+    );
+    const provider = createMainDataProvider({
+      llmClient: vi.fn(async () => ({
+        data: {
+          metadata: { model: "gpt-4.1-mini", provider: "openai", toolCalls: 1 },
+          role: "assistant",
+          text: "Old answer.",
+        },
+        ok: true,
+      })),
+      localSourcesConfigPath,
+      userDataDir,
+    });
+    await provider.startKnowledgeIndex();
+    const [document] = await provider.listKnowledgeDocuments();
+    await provider.attachKnowledgeContextToAgentChat({ documentId: document.id });
+    await provider.sendAgentChatMessage({ userText: "Use reset context" });
+
+    const reset = await provider.resetAgentChatSession();
+
+    expect(reset).toMatchObject({
+      attachedKnowledgeContexts: [],
+      chatMessages: [],
+      contextItems: [],
+      session: {
+        messageCount: 0,
+        source: "userData",
+        status: "ready",
+      },
+      status: "reset",
+      toolCalls: [],
+    });
+    await expect(provider.getAgentChat()).resolves.toMatchObject({
+      attachedKnowledgeContexts: [],
+      chatMessages: [],
+      session: {
+        messageCount: 0,
+      },
+    });
+    const sessionJson = await fs.readFile(path.join(userDataDir, "sessions", "agent-chat-session.json"), "utf8");
+    expect(sessionJson).not.toMatch(/Old answer|Use reset context|sk-|apiKey|token=|Authorization/);
   });
 
   it("uses explicit mock status when phase-2 local paths are not configured", async () => {
@@ -1505,5 +1687,85 @@ describe("main process data provider", () => {
       state: "idle",
       trackCount: 1,
     });
+  });
+
+  it("exposes a safe Knowledge file tree and object preview through the configured root", async () => {
+    const docsRootDir = await fs.mkdtemp(path.join(os.tmpdir(), "main-provider-kb-tree-"));
+    await fs.mkdir(path.join(docsRootDir, "notes"), { recursive: true });
+    await fs.mkdir(path.join(docsRootDir, ".git"), { recursive: true });
+    await fs.writeFile(
+      path.join(docsRootDir, "reader.md"),
+      "# Reader\n\nTree preview apiKey=sk-main-tree-secret D:\\private\\kb\\reader.md\n",
+    );
+    await fs.writeFile(path.join(docsRootDir, "notes", "daily.txt"), "Daily note\n");
+    await fs.writeFile(path.join(docsRootDir, ".git", "secret.md"), "# secret\n");
+    const provider = createMainDataProvider({
+      knowledgeBaseRootDir: docsRootDir,
+      userDataDir: await fs.mkdtemp(path.join(os.tmpdir(), "main-provider-kb-tree-user-data-")),
+    });
+
+    const tree = await provider.listKnowledgeFileTree();
+
+    expect(tree).toMatchObject({
+      root: {
+        children: expect.arrayContaining([
+          expect.objectContaining({ name: "reader.md", readable: true, relativePath: "reader.md", type: "file" }),
+          expect.objectContaining({ name: "notes", relativePath: "notes", type: "folder" }),
+        ]),
+        relativePath: "",
+      },
+      source: "local",
+      status: "ready",
+    });
+    expect(JSON.stringify(tree)).not.toMatch(/sk-main-tree-secret|apiKey|D:\\private/);
+    expect(JSON.stringify(tree)).not.toContain(docsRootDir);
+
+    await expect(provider.getKnowledgeDocumentPreview({
+      maxContentChars: 120,
+      relativePath: "reader.md",
+    })).resolves.toMatchObject({
+      content: expect.stringContaining("# Reader"),
+      readable: true,
+      relativePath: "reader.md",
+      status: "ready",
+    });
+  });
+
+  it("attaches sanitized selected Knowledge text even when it is not in the persisted index", async () => {
+    const docsRootDir = await fs.mkdtemp(path.join(os.tmpdir(), "main-provider-kb-selection-"));
+    const userDataDir = await fs.mkdtemp(path.join(os.tmpdir(), "main-provider-kb-selection-user-data-"));
+    await fs.writeFile(path.join(docsRootDir, "reader.md"), "# Reader\n\nSelection source.\n");
+    const provider = createMainDataProvider({
+      knowledgeBaseRootDir: docsRootDir,
+      userDataDir,
+    });
+
+    const result = await provider.attachKnowledgeContextToAgentChat({
+      contextId: "selection:reader.md:0",
+      matchType: "selection",
+      preview: `Selected text apiKey=sk-selected-secret Authorization: Bearer hidden ${"x".repeat(700)}`,
+      relativePath: "D:\\private\\vault\\reader.md",
+      sessionId: "local-session",
+      sourceType: "knowledge",
+      title: "Reader token=sk-title-secret",
+    });
+
+    expect(result).toMatchObject({
+      attachedKnowledgeContexts: [
+        expect.objectContaining({
+          contextId: "selection:reader.md:0",
+          matchType: "selection",
+          preview: expect.stringContaining("Selected text"),
+          sourceType: "knowledge",
+        }),
+      ],
+      status: "saved",
+    });
+    expect(result.attachedKnowledgeContexts[0].preview.length).toBeLessThanOrEqual(480);
+    expect(JSON.stringify(result)).not.toMatch(/sk-selected-secret|sk-title-secret|apiKey|Authorization|Bearer hidden|D:\\private/);
+
+    const storeJson = await fs.readFile(path.join(userDataDir, "sessions", "agent-chat-knowledge-contexts.json"), "utf8");
+    expect(storeJson).not.toMatch(/sk-selected-secret|sk-title-secret|apiKey|Authorization|Bearer hidden|D:\\private/);
+    await expect(fs.access(path.join(docsRootDir, "sessions", "agent-chat-knowledge-contexts.json"))).rejects.toThrow();
   });
 });

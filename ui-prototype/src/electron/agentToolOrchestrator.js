@@ -62,11 +62,69 @@ function deniedToolCall(tool, message = "Tool execution is denied in this phase.
   };
 }
 
+function buildToolSourceRef(item = {}) {
+  if (!item || typeof item !== "object") {
+    return null;
+  }
+
+  const title = redactAgentToolText(
+    cleanString(item.title ?? item.name ?? item.label ?? item.relativePath ?? item.path),
+  );
+  const preview = redactAgentToolText(
+    cleanString(item.preview ?? item.excerpt ?? item.summary ?? item.detail),
+  );
+  const relativePath = redactAgentToolText(cleanString(item.relativePath ?? item.path));
+
+  if (!title && !preview && !relativePath) {
+    return null;
+  }
+
+  return {
+    ...(cleanString(item.documentId ?? item.documentID ?? item.id) ? { documentId: cleanString(item.documentId ?? item.documentID ?? item.id) } : {}),
+    ...(cleanString(item.chunkId ?? item.chunkID) ? { chunkId: cleanString(item.chunkId ?? item.chunkID) } : {}),
+    ...(cleanString(item.matchType) ? { matchType: redactAgentToolText(item.matchType) } : {}),
+    ...(preview ? { preview } : {}),
+    ...(relativePath ? { relativePath } : {}),
+    ...(Number.isFinite(item.score) ? { score: item.score } : {}),
+    sourceType: "knowledge",
+    title: title || relativePath || "Knowledge source",
+  };
+}
+
+function buildToolSourceRefs(toolCall = {}) {
+  if (!["kb.searchLocal", "kb.getDocumentPreview"].includes(toolCall.toolId)) {
+    return [];
+  }
+
+  const items = [
+    ...asArray(toolCall.items),
+    ...asArray(toolCall.result?.results),
+    ...asArray(toolCall.result?.items),
+  ];
+  const seen = new Set();
+
+  return items
+    .map(buildToolSourceRef)
+    .filter(Boolean)
+    .filter((ref) => {
+      const key = [ref.documentId, ref.chunkId, ref.relativePath, ref.title].filter(Boolean).join(":");
+      if (!key || seen.has(key)) {
+        return false;
+      }
+      seen.add(key);
+      return true;
+    })
+    .slice(0, 5);
+}
+
 function buildToolSummary(toolCall) {
+  const sourceRefs = buildToolSourceRefs(toolCall);
+
   return {
     id: toolCall.id,
     itemCount: toolCall.resultCount ?? 0,
     label: redactAgentToolText(toolCall.label ?? toolCall.title),
+    ...(sourceRefs.length > 0 ? { sourceRefs } : {}),
     status: toolCall.status,
     summary: redactAgentToolText(toolCall.summary ?? toolCall.meta),
     toolId: toolCall.toolId,
@@ -101,6 +159,7 @@ function planFromInput(input = {}) {
   if (Array.isArray(input.toolPlan?.items)) {
     return buildAgentToolPlan({
       dryRunToolPlan: input.toolPlan,
+      session: input.session,
       userText: input.draft?.userText,
     });
   }
@@ -108,6 +167,7 @@ function planFromInput(input = {}) {
   return buildAgentToolPlan({
     dryRunToolPlan: input.dryRunToolPlan,
     llmText: input.llmText,
+    session: input.session,
     userText: input.draft?.userText,
   });
 }

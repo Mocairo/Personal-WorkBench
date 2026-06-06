@@ -10,6 +10,8 @@ const DEFAULT_LIMITS = {
   maxMessages: 6,
   maxSectionChars: 900,
 };
+const MAX_SOURCE_REFS = 6;
+const MAX_SOURCE_REF_PREVIEW_CHARS = 220;
 
 const SAFE_PROVIDER_METADATA_KEYS = new Set(["completionId", "finishReason", "model", "provider", "toolCalls", "usage"]);
 
@@ -105,8 +107,14 @@ function normalizeContextItem(item = {}, index = 0, fallbackSourceType = "sessio
   }
 
   return {
+    chunkId: limitText(firstString(raw.chunkId, raw.chunkID), 120),
+    documentId: limitText(firstString(raw.documentId, raw.documentID), 120),
     id: cleanString(raw.id ?? raw.contextId) || `${sourceType}-${index + 1}`,
     line: `- [${sourceType}] ${title}${sourceMeta ? ` (${sourceMeta})` : ""}${summary ? `: ${summary}` : ""}`,
+    matchType,
+    preview: summary,
+    relativePath,
+    score: Number.isFinite(raw.score) ? raw.score : undefined,
     sourceType,
     status: limitText(firstString(raw.status, raw.state), 80) || "used",
     summary,
@@ -128,6 +136,7 @@ function normalizeToolSummary(summary = {}, index = 0, limits) {
     itemCount: Number.isFinite(summary.itemCount) ? summary.itemCount : Number.isFinite(summary.resultCount) ? summary.resultCount : 0,
     line: `- [tool:${toolId}] ${label} (${status})${text ? `: ${text}` : ""}`,
     label,
+    sourceRefs: normalizeSourceRefInputs(summary.sourceRefs, "knowledge"),
     sourceType: "tool",
     status,
     summary: text,
@@ -218,6 +227,108 @@ function sanitizeProviderMetadata(metadata = {}) {
   return Object.keys(sanitized).length > 0 ? sanitized : null;
 }
 
+function normalizeSourceRefInputs(items = [], fallbackSourceType = "knowledge") {
+  return (Array.isArray(items) ? items : [])
+    .map((item) => {
+      if (!item || typeof item !== "object") {
+        return null;
+      }
+
+      const sourceType = normalizeSourceType(firstString(item.sourceType, item.type, item.source), fallbackSourceType);
+      const title = limitText(firstString(item.title, item.label, item.name, item.relativePath, item.path), 140);
+      const preview = limitText(firstString(item.preview, item.excerpt, item.summary, item.detail), MAX_SOURCE_REF_PREVIEW_CHARS);
+      const relativePath = limitText(firstString(item.relativePath, item.path), 220);
+
+      if (!title && !preview && !relativePath) {
+        return null;
+      }
+
+      return {
+        chunkId: limitText(firstString(item.chunkId, item.chunkID), 120),
+        documentId: limitText(firstString(item.documentId, item.documentID, item.id), 120),
+        matchType: limitText(firstString(item.matchType), 80),
+        preview,
+        relativePath,
+        score: Number.isFinite(item.score) ? item.score : undefined,
+        sourceType,
+        title: title || relativePath || `${sourceType} source`,
+      };
+    })
+    .filter(Boolean);
+}
+
+function sourceRefFromContextItem(item = {}) {
+  if (item.sourceType !== "knowledge") {
+    return null;
+  }
+
+  return normalizeSourceRefInputs([
+    {
+      chunkId: item.chunkId,
+      documentId: item.documentId || item.id,
+      matchType: item.matchType,
+      preview: item.preview || item.summary,
+      relativePath: item.relativePath,
+      score: item.score,
+      sourceType: item.sourceType,
+      title: item.title,
+    },
+  ])[0] ?? null;
+}
+
+function sourceRefKey(ref = {}) {
+  return [ref.documentId, ref.chunkId, ref.relativePath, ref.title].filter(Boolean).join(":");
+}
+
+function sourceRefLine(ref = {}) {
+  const meta = [
+    ref.sourceType,
+    ref.relativePath,
+    ref.matchType,
+    Number.isFinite(ref.score) ? `score ${ref.score}` : "",
+  ].filter(Boolean).join("; ");
+
+  return `- [${ref.sourceRefId}] ${ref.title}${meta ? ` (${meta})` : ""}${ref.preview ? `: ${ref.preview}` : ""}`;
+}
+
+function selectSourceRefs(selectedTools, selectedContextItems, remainingRef, maxItems) {
+  const rawRefs = [
+    ...selectedTools.flatMap((item) => normalizeSourceRefInputs(item.sourceRefs, "knowledge")),
+    ...selectedContextItems.map(sourceRefFromContextItem).filter(Boolean),
+  ];
+  const selected = [];
+  const seen = new Set();
+
+  for (const rawRef of rawRefs) {
+    if (selected.length >= Math.min(MAX_SOURCE_REFS, maxItems) || remainingRef.value <= 0) {
+      break;
+    }
+
+    const key = sourceRefKey(rawRef);
+    if (!key || seen.has(key)) {
+      continue;
+    }
+    seen.add(key);
+
+    const ref = {
+      ...rawRef,
+      sourceRefId: `S${selected.length + 1}`,
+    };
+    const line = sourceRefLine(ref);
+    if (line.length > remainingRef.value) {
+      if (remainingRef.value < 80) {
+        continue;
+      }
+      ref.preview = limitText(ref.preview, Math.max(0, remainingRef.value - line.length + ref.preview.length));
+    }
+
+    remainingRef.value = Math.max(0, remainingRef.value - sourceRefLine(ref).length);
+    selected.push(ref);
+  }
+
+  return selected;
+}
+
 function systemInstruction(input = {}) {
   const agentName = redactContextText(firstString(input.agentConfig?.name, input.agentConfig?.title));
 
@@ -226,6 +337,7 @@ function systemInstruction(input = {}) {
     "Use only the bounded, redacted context provided in this request.",
     "Do not request, plan, or execute tools; approved tool results are already summarized.",
     "Keep answers grounded in session memory, source summaries, and tool summaries.",
+    "When using Source References, cite them with [S1], [S2] style markers.",
   ].join(" ");
 }
 
@@ -282,13 +394,16 @@ function selectHistory(history, remainingRef, maxMessages) {
   return selectedNewestFirst.reverse();
 }
 
-function contextMessage(selectedTools, selectedContextItems) {
+function contextMessage(selectedTools, selectedContextItems, selectedSourceRefs = []) {
   const sections = [];
   if (selectedTools.length > 0) {
     sections.push(`Tool Result Summaries:\n${selectedTools.map((item) => item.line).join("\n")}`);
   }
   if (selectedContextItems.length > 0) {
     sections.push(`Context Source Summaries:\n${selectedContextItems.map((item) => item.line).join("\n")}`);
+  }
+  if (selectedSourceRefs.length > 0) {
+    sections.push(`Source References:\n${selectedSourceRefs.map(sourceRefLine).join("\n")}`);
   }
 
   return sections.join("\n\n");
@@ -312,8 +427,9 @@ export function buildAgentLlmContext(input = {}, rawLimits = {}) {
   };
   const selectedTools = selectLines(toolSummaries, remainingRef, limits.maxItems);
   const selectedContextItems = selectLines(contextItems, remainingRef, limits.maxItems - selectedTools.length);
+  const selectedSourceRefs = selectSourceRefs(selectedTools, selectedContextItems, remainingRef, limits.maxItems);
   const selectedHistory = selectHistory(history, remainingRef, limits.maxMessages);
-  const builtContextMessage = contextMessage(selectedTools, selectedContextItems);
+  const builtContextMessage = contextMessage(selectedTools, selectedContextItems, selectedSourceRefs);
   const messages = [
     { content: systemContent, role: "system" },
     ...(builtContextMessage ? [{ content: builtContextMessage, role: "system" }] : []),
@@ -333,8 +449,20 @@ export function buildAgentLlmContext(input = {}, rawLimits = {}) {
         history: Math.max(0, history.length - selectedHistory.length),
         toolResults: Math.max(0, toolSummaries.length - selectedTools.length),
       },
+      sourceRefs: selectedSourceRefs,
       usedContextItems: selectedContextItems.map((item) => ({
         id: item.id,
+        ...(item.sourceType === "knowledge" && selectedSourceRefs.length > 0
+          ? {
+              sourceRefIds: selectedSourceRefs
+                .filter((ref) => (
+                  (ref.chunkId && ref.chunkId === item.chunkId) ||
+                  (ref.documentId && ref.documentId === item.documentId) ||
+                  (ref.relativePath && ref.relativePath === item.relativePath)
+                ))
+                .map((ref) => ref.sourceRefId),
+            }
+          : {}),
         sourceType: item.sourceType,
         status: item.status,
         title: item.title,

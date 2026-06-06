@@ -46,6 +46,14 @@ export async function runAgentChatDryMessage(input) {
   return callRuntimeMethod("agentChat", "runDryMessage", input);
 }
 
+export async function resetAgentChatSession(input) {
+  return callRuntimeMethod("agentChat", "resetSession", input);
+}
+
+export async function restoreAgentChatSession(input) {
+  return callRuntimeMethod("agentChat", "restoreSession", input);
+}
+
 export async function sendAgentChatMessage(input) {
   return callRuntimeMethod("agentChat", "sendMessage", input);
 }
@@ -138,6 +146,10 @@ export async function listKnowledgeSources() {
 
 export async function listKnowledgeDocuments() {
   return callRuntimeMethod("kb", "listDocuments");
+}
+
+export async function listKnowledgeFileTree() {
+  return callRuntimeMethod("kb", "listTree");
 }
 
 export async function getKnowledgeIndexStatus() {

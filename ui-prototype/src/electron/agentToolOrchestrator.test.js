@@ -107,6 +107,56 @@ describe("agent tool orchestrator", () => {
     expect(result.shouldCallLlm).toBe(true);
   });
 
+  it("keeps sanitized kb.searchLocal chunk source refs in tool summaries", async () => {
+    const provider = {
+      searchKnowledgeLocal: vi.fn(async () => ({
+        results: [
+          {
+            absolutePath: "D:\\private\\vault\\daily.md",
+            chunkId: "chunk-1",
+            documentId: "doc-1",
+            matchType: "hybrid",
+            preview: "Chunk preview with apiKey=sk-source-secret",
+            relativePath: "daily.md",
+            score: 0.87,
+            sourceType: "knowledge",
+            title: "Daily Note",
+          },
+        ],
+      })),
+    };
+
+    const result = await runAgentToolLoop({
+      contextPack: { items: [] },
+      draft: draft("daily note"),
+      provider,
+      toolPlan: {
+        items: [{ args: { query: "daily" }, toolId: "kb.searchLocal" }],
+      },
+      toolPolicy: {
+        autoAllowLevel1ReadOnly: true,
+      },
+    });
+
+    expect(result.toolResultsSummary).toEqual([
+      expect.objectContaining({
+        sourceRefs: [
+          expect.objectContaining({
+            chunkId: "chunk-1",
+            documentId: "doc-1",
+            matchType: "hybrid",
+            preview: "Chunk preview with [redacted]",
+            relativePath: "daily.md",
+            sourceType: "knowledge",
+            title: "Daily Note",
+          }),
+        ],
+        toolId: "kb.searchLocal",
+      }),
+    ]);
+    expect(JSON.stringify(result)).not.toMatch(/sk-source-secret|apiKey|D:\\private/i);
+  });
+
   it("returns error events for provider failures without throwing", async () => {
     const provider = {
       listIntelLogs: vi.fn(async () => {

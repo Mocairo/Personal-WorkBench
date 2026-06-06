@@ -24,5 +24,12 @@
   "devDependencies": {
     "electron": "^42.3.0",
     "vitest": "^3.0.0"
-  }
+  },
+  "description": "",
+  "directories": {
+    "doc": "docs"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC"
 }

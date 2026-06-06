@@ -17,6 +17,8 @@ describe("electron IPC handlers", () => {
       previewAgentChatContextPack: () => ({ items: [{ title: "Docs" }], status: "ready" }),
       previewAgentChatToolPlan: () => ({ items: [{ toolId: "kb.search" }], status: "ready" }),
       runAgentChatDryMessage: (input) => ({ dryRun: true, userText: input.userText }),
+      resetAgentChatSession: () => ({ chatMessages: [], status: "reset" }),
+      restoreAgentChatSession: (input) => ({ sessionId: input.sessionId, status: "restored" }),
       cancelAgentChatStream: (input) => ({ requestId: input.requestId, status: "cancelled" }),
       attachKnowledgeContextToAgentChat: (input) => ({
         attachedKnowledgeContexts: [{ contextId: "doc-1:chunk-1", title: input.title }],
@@ -55,6 +57,7 @@ describe("electron IPC handlers", () => {
       },
       getKnowledgeBase: () => ({ page: "knowledge" }),
       getKnowledgeDocumentPreview: (documentId) => ({ documentId, preview: "readme" }),
+      listKnowledgeFileTree: () => ({ root: { children: [], type: "folder" }, source: "local" }),
       listKnowledgeSources: () => [{ sourceId: "docs" }],
       listKnowledgeDocuments: () => [{ documentId: "readme" }],
       getKnowledgeIndexStatus: () => ({ docs: 1 }),
@@ -102,6 +105,8 @@ describe("electron IPC handlers", () => {
       "agentChat:context:preview",
       "agentChat:toolPlan:preview",
       "agentChat:message:runDry",
+      "agentChat:session:reset",
+      "agentChat:session:restore",
       "agentChat:message:send",
       "agentChat:message:stream",
       "agentChat:message:stream:cancel",
@@ -123,6 +128,7 @@ describe("electron IPC handlers", () => {
       "system:task:list",
       "kb:source:list",
       "kb:document:list",
+      "kb:fileTree:list",
       "kb:index:status",
       "kb:search:local",
       "kb:document:preview",
@@ -174,6 +180,10 @@ describe("electron IPC handlers", () => {
     });
     await expect(handlers.get("agentChat:message:runDry")(null, { userText: "dry run" })).resolves.toEqual({
       data: { dryRun: true, userText: "dry run" },
+      ok: true,
+    });
+    await expect(handlers.get("agentChat:session:restore")(null, { sessionId: "history-1" })).resolves.toEqual({
+      data: { sessionId: "history-1", status: "restored" },
       ok: true,
     });
     await expect(handlers.get("agentChat:message:send")(null, { userText: "hello" })).resolves.toEqual({
@@ -273,6 +283,10 @@ describe("electron IPC handlers", () => {
     });
     await expect(handlers.get("kb:index:start")()).resolves.toEqual({
       data: { source: "knowledge-index", status: "ready", summary: { docs: 1 } },
+      ok: true,
+    });
+    await expect(handlers.get("kb:fileTree:list")()).resolves.toEqual({
+      data: { root: { children: [], type: "folder" }, source: "local" },
       ok: true,
     });
     await expect(handlers.get("llm:message:sendText")()).resolves.toEqual({

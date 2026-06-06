@@ -14,6 +14,7 @@ export function AppShell() {
     activePage,
     closeSwitcher,
     confirmPage,
+    navigateToPageId,
     openSwitcher,
     selectedIndex,
     selectedPage,
@@ -63,7 +64,7 @@ export function AppShell() {
           onOpenSwitcher={openSwitcher}
         />
         <div className="page-layer">
-          <CurrentPage />
+          <CurrentPage onNavigate={navigateToPageId} />
         </div>
         {settingsOpen && <SettingsPanel onClose={() => setSettingsOpen(false)} />}
         {switcherOpen && (

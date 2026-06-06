@@ -74,7 +74,7 @@ function normalizeSourceType(value) {
 
 function normalizeMatchType(value) {
   const matchType = cleanString(value).toLowerCase();
-  return ["keyword", "semantic", "hybrid", "attached", "document", "chunk"].includes(matchType)
+  return ["keyword", "semantic", "hybrid", "attached", "document", "chunk", "selection"].includes(matchType)
     ? matchType
     : "attached";
 }

@@ -19,7 +19,7 @@ const backgroundJobs = [
   { label: "Intel digest", value: "12 new" },
 ];
 
-export function HomeDashboard() {
+export function HomeDashboard({ onNavigate }) {
   const { data } = useHomeDashboardData();
   const { homeTasks, quickEntries, recentActivities, serviceState } = data;
 
@@ -118,7 +118,7 @@ export function HomeDashboard() {
           <PanelHeader icon={Zap} title="Jump points" />
           <div className="quick-grid">
             {quickEntries.map((page) => (
-              <QuickEntry page={page} key={page.id} />
+              <QuickEntry onSelect={onNavigate} page={page} key={page.id} />
             ))}
           </div>
         </GlassPanel>

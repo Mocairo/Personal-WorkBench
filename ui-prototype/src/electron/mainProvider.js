@@ -22,7 +22,8 @@ import {
 import { getHomeDashboardData } from "./homeDashboardAdapter.js";
 import {
   getKnowledgeBaseData,
-  getKnowledgeDocumentPreview,
+  getKnowledgeDocumentPreview as getKnowledgeDocumentPreviewData,
+  getKnowledgeFileTree,
   reindexKnowledgeBase,
   searchKnowledgeLocal,
 } from "./knowledgeBaseAdapter.js";
@@ -51,7 +52,11 @@ import {
   streamLlmTextMessage as streamAdapterLlmTextMessage,
   validateProviderConfig,
 } from "./llmProviderAdapter.js";
-import { appendAgentChatSessionTurn } from "./agentChatSessionStore.js";
+import {
+  appendAgentChatSessionTurn,
+  resetAgentChatUserDataSession,
+  restoreAgentChatUserDataSession,
+} from "./agentChatSessionStore.js";
 import { isApiResult } from "./apiResult.js";
 import { loadLlmPublicConfig } from "./llmEnvLoader.js";
 import {
@@ -169,6 +174,30 @@ function findKnowledgeAttachment(index = {}, input = {}) {
   return null;
 }
 
+function buildFallbackKnowledgeAttachment(input = {}) {
+  const preview = cleanString(input.preview ?? input.excerpt ?? input.summary ?? input.selectedText);
+  const title = cleanString(input.title ?? input.label ?? input.relativePath ?? input.documentId);
+  const relativePath = cleanString(input.relativePath ?? input.path);
+  const contextId = cleanString(input.contextId);
+
+  if (!preview && !title && !relativePath) {
+    return null;
+  }
+
+  return {
+    ...(contextId ? { contextId } : {}),
+    ...(cleanString(input.chunkId) ? { chunkId: cleanString(input.chunkId) } : {}),
+    ...(cleanString(input.documentId ?? input.id) ? { documentId: cleanString(input.documentId ?? input.id) } : {}),
+    matchType: cleanString(input.matchType) || (preview ? "selection" : "document"),
+    preview,
+    relativePath,
+    score: Number.isFinite(input.score) ? input.score : 1,
+    sourceType: "knowledge",
+    title: title || "Knowledge selection",
+    updatedAt: cleanString(input.updatedAt),
+  };
+}
+
 function attachSourceStatus(data, meta, sourceHealth, useMock) {
   const status = useMock ? "mock" : sourceHealth.status;
   const message = useMock
@@ -240,13 +269,50 @@ function withContextProviderMetadata(contextSummary, metadata) {
   };
 }
 
+function citationMetadataFromContextSummary(contextSummary = {}) {
+  const refs = Array.isArray(contextSummary?.sourceRefs) ? contextSummary.sourceRefs : [];
+
+  return refs.slice(0, 8).map((ref) => ({
+    ...(cleanString(ref.chunkId) ? { chunkId: redactAgentToolText(ref.chunkId) } : {}),
+    ...(cleanString(ref.documentId) ? { documentId: redactAgentToolText(ref.documentId) } : {}),
+    ...(cleanString(ref.matchType) ? { matchType: redactAgentToolText(ref.matchType) } : {}),
+    ...(cleanString(ref.preview) ? { preview: redactAgentToolText(ref.preview) } : {}),
+    ...(cleanString(ref.relativePath) ? { relativePath: redactAgentToolText(ref.relativePath) } : {}),
+    ...(Number.isFinite(ref.score) ? { score: ref.score } : {}),
+    sourceRefId: cleanString(ref.sourceRefId) || `S${refs.indexOf(ref) + 1}`,
+    sourceType: redactAgentToolText(cleanString(ref.sourceType) || "knowledge"),
+    title: redactAgentToolText(cleanString(ref.title) || cleanString(ref.relativePath) || "Source"),
+  }));
+}
+
+function withAssistantCitations(metadata, contextSummary) {
+  const citations = citationMetadataFromContextSummary(contextSummary);
+  const baseMetadata = metadata && typeof metadata === "object" ? metadata : {};
+  const assistantMetadata = {
+    ...baseMetadata,
+    ...(citations.length > 0 ? { citations } : {}),
+  };
+
+  return Object.keys(assistantMetadata).length > 0 ? assistantMetadata : null;
+}
+
 function getToolPolicy(input = {}) {
+  const explicitPolicy = input.toolPolicy && typeof input.toolPolicy === "object" ? input.toolPolicy : {};
+  const approvedToolIds = new Set([
+    ...(Array.isArray(input.approvedToolIds) ? input.approvedToolIds : []),
+    ...(Array.isArray(explicitPolicy.approvedToolIds) ? explicitPolicy.approvedToolIds : []),
+  ]);
+  if (explicitPolicy.autoAllowKnowledgeSearch !== false && input.autoAllowKnowledgeSearch !== false) {
+    approvedToolIds.add("kb.searchLocal");
+  }
+
   return {
     approveAllLevel1: Boolean(input.approveAllLevel1),
     approvedToolCallIds: Array.isArray(input.approvedToolCallIds) ? input.approvedToolCallIds : [],
-    approvedToolIds: Array.isArray(input.approvedToolIds) ? input.approvedToolIds : [],
+    approvedToolIds: Array.from(approvedToolIds),
     autoAllowLevel1ReadOnly: Boolean(input.autoAllowLevel1ReadOnly),
-    ...(input.toolPolicy && typeof input.toolPolicy === "object" ? input.toolPolicy : {}),
+    ...explicitPolicy,
+    approvedToolIds: Array.from(approvedToolIds),
   };
 }
 
@@ -261,6 +327,38 @@ function getToolLoopPayload(toolLoop = {}) {
       ? { toolResultsSummary: toolLoop.toolResultsSummary }
       : {}),
   };
+}
+
+function filterAgentChatLlmContextPack(contextPack = {}) {
+  return {
+    ...contextPack,
+    items: (Array.isArray(contextPack.items) ? contextPack.items : []).filter((item) => (
+      item?.sourceType === "tool" ||
+      item?.type === "tool" ||
+      item?.source === "tool" ||
+      item?.sourceType === "session" ||
+      item?.type === "session"
+    )),
+  };
+}
+
+function sanitizeAssistantAnswerText(value, contextSummary = {}) {
+  const text = redactAgentToolText(value ?? "");
+  if (!/<tool_call|<function=/i.test(text)) {
+    return text;
+  }
+
+  const query = text.match(/<parameter\s*=\s*query>\s*([^<]+?)\s*<\/parameter>/i)?.[1]
+    ?? text.match(/query["']?\s*[:=]\s*["']?([^"'<\n]+)/i)?.[1]
+    ?? "";
+  const sourceCount = Array.isArray(contextSummary.sourceRefs) ? contextSummary.sourceRefs.length : 0;
+  const queryText = query ? `“${redactAgentToolText(query)}”` : "相关内容";
+
+  return [
+    `我已拦截模型返回的工具调用草稿，没有把原始 tool_call 展示出来。`,
+    `本轮会继续以知识库检索 ${queryText} 为依据回答。`,
+    sourceCount > 0 ? `可参考下方 ${sourceCount} 个来源引用。` : "如果需要更完整结果，请直接追问要展开的部分。",
+  ].join(" ");
 }
 
 function buildToolGateAgentChatResult({ contextPack, contextSummary, draft, requestId, status, toolLoop }) {
@@ -300,6 +398,7 @@ function buildToolLlmErrorResult({ contextPack, contextSummary, draft, llmResult
   return {
     assistantMessage: {
       id: `llm-error-${draft.id}`,
+      metadata: withAssistantCitations(null, contextSummary),
       role: "assistant",
       source: "llm",
       status: "error",
@@ -328,19 +427,21 @@ function buildToolLlmErrorResult({ contextPack, contextSummary, draft, llmResult
 function buildAgentChatLlmResult({ contextPack, contextSummary, draft, llmData, requestId, toolLoop }) {
   const metadata = sanitizeLlmMetadata(llmData?.metadata);
   const status = llmData?.status === "cancelled" ? "cancelled" : "ready";
-  const assistantText = redactAgentToolText(llmData?.text ?? "");
   const toolPayload = getToolLoopPayload(toolLoop);
+  const finalContextSummary = withContextProviderMetadata(contextSummary, metadata);
+  const assistantText = sanitizeAssistantAnswerText(llmData?.text ?? "", finalContextSummary);
+  const assistantMetadata = withAssistantCitations(metadata, finalContextSummary);
 
   return {
     assistantMessage: {
       id: llmData?.id ?? `llm-agent-${draft.id}`,
-      metadata,
+      metadata: assistantMetadata,
       role: "assistant",
       source: "llm",
       status,
       text: assistantText,
     },
-    ...(contextSummary ? { contextSummary: withContextProviderMetadata(contextSummary, metadata) } : {}),
+    ...(finalContextSummary ? { contextSummary: finalContextSummary } : {}),
     contextPack,
     llm: {
       metadata,
@@ -442,7 +543,7 @@ export function createMainDataProvider(options = {}) {
       {
         agentConfig: selectAgentForContext(agentManagement, draft, agentChat),
         attachedKnowledgeContexts: agentChat.attachedKnowledgeContexts,
-        contextPack,
+        contextPack: filterAgentChatLlmContextPack(contextPack),
         providerMetadata,
         session: agentChat,
         toolResultsSummary,
@@ -574,12 +675,14 @@ export function createMainDataProvider(options = {}) {
         maxItems: options.agentChatContextPackMaxItems,
         provider,
       });
+      const agentChatForToolPlan = await provider.getAgentChat().catch(() => ({}));
       const toolLoop = await runAgentToolLoop({
         contextPack,
         draft,
         dryRunToolPlan: input.dryRunToolPlan,
         llmText: input.llmToolPlanText,
         provider,
+        session: agentChatForToolPlan,
         toolPlan: input.toolPlan,
         toolPolicy: getToolPolicy(input),
       });
@@ -598,9 +701,10 @@ export function createMainDataProvider(options = {}) {
         draft,
         toolResultsSummary: toolLoop.toolResultsSummary,
       });
+      const llmContextPack = filterAgentChatLlmContextPack(toolLoop.contextPack);
       const llmResult = await provider.sendLlmTextMessage({
         ...draft,
-        contextPack: toolLoop.contextPack,
+        contextPack: llmContextPack,
         contextSummary: llmContext.contextSummary,
         messages: llmContext.messages,
         toolResultsSummary: toolLoop.toolResultsSummary,
@@ -681,12 +785,14 @@ export function createMainDataProvider(options = {}) {
           maxItems: options.agentChatContextPackMaxItems,
           provider,
         });
+        const agentChatForToolPlan = await provider.getAgentChat().catch(() => ({}));
         const toolLoop = await runAgentToolLoop({
           contextPack,
           draft,
           dryRunToolPlan: input.dryRunToolPlan,
           llmText: input.llmToolPlanText,
           provider,
+          session: agentChatForToolPlan,
           toolPlan: input.toolPlan,
           toolPolicy: getToolPolicy(input),
         });
@@ -706,10 +812,11 @@ export function createMainDataProvider(options = {}) {
           draft,
           toolResultsSummary: toolLoop.toolResultsSummary,
         });
+        const llmContextPack = filterAgentChatLlmContextPack(toolLoop.contextPack);
         const llmResult = await provider.streamLlmTextMessage(
           {
             ...draft,
-            contextPack: toolLoop.contextPack,
+            contextPack: llmContextPack,
             contextSummary: llmContext.contextSummary,
             messages: llmContext.messages,
             requestId,
@@ -800,6 +907,57 @@ export function createMainDataProvider(options = {}) {
         status: "cancelled",
       };
     },
+    async resetAgentChatSession(input = {}) {
+      const sessionId = await resolveAgentKnowledgeContextSessionId(input);
+      if (!options.userDataDir) {
+        return {
+          ...mockProvider.getMockAgentChatData(),
+          attachedKnowledgeContexts: [],
+          chatMessages: [],
+          contextItems: [],
+          status: "unavailable",
+          toolCalls: [],
+        };
+      }
+
+      const resetResult = await resetAgentChatUserDataSession({ userDataDir: options.userDataDir });
+      const sessionIdsToClear = new Set([sessionId, "agent-chat-session", "local-session"]);
+      for (const id of sessionIdsToClear) {
+        await clearStoredAgentKnowledgeContexts({
+          ...input,
+          sessionId: id,
+        }, getContextStoreOptions());
+      }
+
+      const agentChat = await provider.getAgentChat();
+      return {
+        ...agentChat,
+        attachedKnowledgeContexts: [],
+        attachedKnowledgeContextCount: 0,
+        chatMessages: [],
+        contextItems: [],
+        recentSessions: resetResult.history ?? agentChat.recentSessions ?? [],
+        status: "reset",
+        toolCalls: [],
+      };
+    },
+    async restoreAgentChatSession(input = {}) {
+      if (!options.userDataDir) {
+        return {
+          status: "unavailable",
+        };
+      }
+
+      const restored = await restoreAgentChatUserDataSession(input, { userDataDir: options.userDataDir });
+      if (restored.status !== "restored") {
+        return restored;
+      }
+
+      return {
+        ...(await provider.getAgentChat()),
+        status: "restored",
+      };
+    },
     async listAgentChatKnowledgeContexts(input = {}) {
       const sessionId = await resolveAgentKnowledgeContextSessionId(input);
       if (!options.userDataDir) {
@@ -835,7 +993,7 @@ export function createMainDataProvider(options = {}) {
       }
 
       const index = await readKnowledgeIndex({ userDataDir: options.userDataDir });
-      const attachment = findKnowledgeAttachment(index, input);
+      const attachment = findKnowledgeAttachment(index, input) ?? buildFallbackKnowledgeAttachment(input);
       if (!attachment) {
         return {
           ...(await listStoredAgentKnowledgeContexts({
@@ -1085,6 +1243,17 @@ export function createMainDataProvider(options = {}) {
     async listKnowledgeDocuments() {
       return (await provider.getKnowledgeBase()).knowledgeDocuments;
     },
+    async listKnowledgeFileTree() {
+      const { paths, sourceHealth } = await getKnowledgeSourceContext();
+
+      if (!canReadLocalSource(sourceHealth)) {
+        return mockProvider.listKnowledgeFileTree();
+      }
+
+      return getKnowledgeFileTree({
+        rootDir: paths.knowledgeBaseRootDir,
+      });
+    },
     async getKnowledgeIndexStatus() {
       return (await provider.getKnowledgeBase()).indexStats;
     },
@@ -1135,15 +1304,18 @@ export function createMainDataProvider(options = {}) {
         updatedAt: result.updatedAt,
       };
     },
-    async getKnowledgeDocumentPreview(documentId) {
+    async getKnowledgeDocumentPreview(documentInput) {
       const { paths, sourceHealth } = await getKnowledgeSourceContext();
 
       if (!canReadLocalSource(sourceHealth)) {
-        return mockProvider.getKnowledgeDocumentPreview(documentId);
+        return mockProvider.getKnowledgeDocumentPreview(documentInput);
       }
 
-      return getKnowledgeDocumentPreview({
-        id: documentId,
+      const input = typeof documentInput === "string" ? { id: documentInput } : (documentInput ?? {});
+
+      return getKnowledgeDocumentPreviewData({
+        ...input,
+        id: input.id ?? input.documentId,
         rootDir: paths.knowledgeBaseRootDir,
         userDataDir: options.userDataDir,
       });
@@ -1220,6 +1392,15 @@ export function createMainDataProvider(options = {}) {
           status: session.status ?? session.state ?? "ready",
           title: session.title ?? "Local session",
         },
+        ...(Array.isArray(agentChat.recentSessions) ? agentChat.recentSessions.map((item) => ({
+          lastUpdated: item.lastUpdated ?? null,
+          messageCount: item.messageCount ?? 0,
+          preview: item.preview ?? "",
+          sessionId: item.sessionId,
+          state: "archived",
+          status: "archived",
+          title: item.title ?? "Previous chat",
+        })) : []),
       ];
     },
     async listLlmProviders() {

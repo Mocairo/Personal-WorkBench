@@ -1,12 +1,21 @@
+import React from "react";
+import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it, vi } from "vitest";
 import {
   attachKnowledgeDocumentToAgentChat,
+  filterKnowledgeFileTree,
   filterKnowledgeDocumentRows,
+  getKnowledgeFileAttachmentInput,
   getKnowledgeAttachmentInput,
   getKnowledgeDisplayData,
   getKnowledgeDocumentRows,
   getKnowledgeIndexStatusRows,
+  getKnowledgePreviewInput,
+  getKnowledgeReaderView,
+  KnowledgeBase,
+  MarkdownBlocks,
   runKnowledgeReindex,
+  runKnowledgeFullTextSearch,
 } from "./KnowledgeBase";
 
 describe("KnowledgeBase page data", () => {
@@ -218,5 +227,148 @@ describe("KnowledgeBase page data", () => {
     expect(provider.attachKnowledgeContextToAgentChat).toHaveBeenCalledWith(input);
     expect(result).toMatchObject({ status: "saved" });
     expect(JSON.stringify({ input, result })).not.toMatch(/sk-doc-secret|sk-title-secret|apiKey|token=|D:\\private/);
+  });
+
+  it("filters the file tree locally by file name and relative path while preserving parents", () => {
+    const tree = [
+      {
+        children: [
+          { id: "kb-notes-daily", name: "daily.txt", readable: true, relativePath: "notes/daily.txt", type: "file" },
+          { id: "kb-notes-plan", name: "plan.md", readable: true, relativePath: "notes/plan.md", type: "file" },
+        ],
+        id: "folder-notes",
+        name: "notes",
+        relativePath: "notes",
+        type: "folder",
+      },
+      { id: "kb-readme", name: "README.md", readable: true, relativePath: "README.md", type: "file" },
+    ];
+
+    expect(filterKnowledgeFileTree(tree, "daily")).toEqual([
+      expect.objectContaining({
+        name: "notes",
+        children: [expect.objectContaining({ relativePath: "notes/daily.txt" })],
+      }),
+    ]);
+    expect(filterKnowledgeFileTree(tree, "README.md")).toEqual([
+      expect.objectContaining({ relativePath: "README.md" }),
+    ]);
+    expect(filterKnowledgeFileTree(tree, "")).toEqual(tree);
+  });
+
+  it("builds preview inputs for file nodes and search results", () => {
+    expect(getKnowledgePreviewInput({
+      id: "kb-docs-reader-md",
+      readable: true,
+      relativePath: "docs/reader.md",
+      type: "file",
+    })).toEqual({
+      id: "kb-docs-reader-md",
+      relativePath: "docs/reader.md",
+    });
+    expect(getKnowledgePreviewInput({
+      chunkId: "chunk-1",
+      documentId: "doc-1",
+      id: "chunk-1",
+      relativePath: "docs/result.md",
+    })).toEqual({
+      id: "doc-1",
+      relativePath: "docs/result.md",
+    });
+  });
+
+  it("represents markdown and raw reader modes without changing content", () => {
+    const preview = {
+      content: "# Heading\n\nBody text",
+      relativePath: "notes/heading.md",
+      type: "md",
+    };
+
+    expect(getKnowledgeReaderView(preview, "markdown")).toMatchObject({
+      content: "# Heading\n\nBody text",
+      mode: "markdown",
+      renderAsMarkdown: true,
+    });
+    expect(getKnowledgeReaderView(preview, "raw")).toMatchObject({
+      content: "# Heading\n\nBody text",
+      mode: "raw",
+      renderAsMarkdown: false,
+    });
+  });
+
+  it("renders bold markdown inside list items without showing delimiters", () => {
+    const markup = renderToStaticMarkup(<MarkdownBlocks content="- **Title**: Adaptive Memory" />);
+
+    expect(markup).toContain("<strong>Title</strong>");
+    expect(markup).not.toContain("**Title**");
+  });
+
+  it("keeps content that appears after a heading in the same markdown block", () => {
+    const markup = renderToStaticMarkup(
+      <MarkdownBlocks content={"# 2026-04-14\n今天准备做什么\n- 复盘 Memory reader"} />,
+    );
+
+    expect(markup).toContain("2026-04-14");
+    expect(markup).toContain("今天准备做什么");
+    expect(markup).toContain("复盘 Memory reader");
+  });
+
+  it("runs full-text Knowledge search through the provider on Enter/search action", async () => {
+    const provider = {
+      searchKnowledgeLocal: vi.fn(async (query) => ({ query, results: [{ relativePath: "notes/daily.txt" }], total: 1 })),
+    };
+
+    await expect(runKnowledgeFullTextSearch(" needle ", provider)).resolves.toMatchObject({
+      query: "needle",
+      total: 1,
+    });
+    expect(provider.searchKnowledgeLocal).toHaveBeenCalledWith("needle");
+  });
+
+  it("builds sanitized attach payloads for current file and selected reader text", () => {
+    const currentFile = {
+      content: "Full apiKey=sk-file-secret body",
+      id: "kb-docs-reader-md",
+      preview: "Preview body",
+      relativePath: "docs/reader.md",
+      title: "Reader token=sk-title-secret",
+      updatedAt: "2026-06-06T10:00:00.000Z",
+    };
+
+    const currentInput = getKnowledgeFileAttachmentInput(currentFile, "local-session");
+    const selectionInput = getKnowledgeFileAttachmentInput(
+      currentFile,
+      "local-session",
+      `Selected apiKey=sk-selection-secret Authorization: Bearer hidden ${"x".repeat(700)}`,
+    );
+
+    expect(currentInput).toMatchObject({
+      documentId: "kb-docs-reader-md",
+      matchType: "document",
+      preview: "Preview body",
+      relativePath: "docs/reader.md",
+      sessionId: "local-session",
+      sourceType: "knowledge",
+    });
+    expect(selectionInput).toMatchObject({
+      contextId: "kb-docs-reader-md:selection",
+      documentId: "kb-docs-reader-md",
+      matchType: "selection",
+      relativePath: "docs/reader.md",
+      sourceType: "knowledge",
+    });
+    expect(selectionInput.preview).toContain("Selected");
+    expect(selectionInput.preview.length).toBeLessThanOrEqual(480);
+    expect(JSON.stringify({ currentInput, selectionInput })).not.toMatch(/sk-file-secret|sk-title-secret|sk-selection-secret|apiKey|Authorization|Bearer hidden/);
+  });
+
+  it("renders the Knowledge Base as a reader workspace instead of a graph console by default", () => {
+    const markup = renderToStaticMarkup(<KnowledgeBase />);
+
+    expect(markup).toContain("File tree");
+    expect(markup).toContain("Reader");
+    expect(markup).toContain("Inspector");
+    expect(markup).toContain("Index Health");
+    expect(markup).not.toContain("Knowledge graph");
   });
 });

@@ -8,14 +8,15 @@ import {
 } from "./knowledgeIndexStore.js";
 import { createKnowledgeDocumentId } from "../shared/knowledgeContracts.js";
 
-const DOCUMENT_EXTENSIONS = new Set([".md", ".markdown", ".txt", ".json", ".yaml", ".yml", ".csv", ".pdf", ".puml"]);
+const DOCUMENT_EXTENSIONS = new Set([".md", ".markdown", ".txt", ".json", ".yaml", ".yml", ".csv", ".pdf", ".docx", ".puml"]);
 const TEXT_EXTENSIONS = new Set([".md", ".markdown", ".txt", ".json", ".yaml", ".yml", ".csv", ".puml"]);
-const METADATA_ONLY_EXTENSIONS = new Set([".pdf"]);
+const METADATA_ONLY_EXTENSIONS = new Set([".pdf", ".docx"]);
 const IGNORED_DIRECTORIES = new Set([".git", "node_modules", "dist", "build"]);
 const DEFAULT_MAX_DOCUMENTS = 500;
 const DEFAULT_MAX_FILE_SIZE_BYTES = 512 * 1024;
 const TAGS_BY_EXTENSION = {
   ".csv": "csv",
+  ".docx": "docx",
   ".json": "json",
   ".markdown": "markdown",
   ".md": "markdown",
@@ -257,13 +258,16 @@ async function buildDocument(entry, options = {}) {
   const tag = getTag(entry.extension);
 
   if (METADATA_ONLY_EXTENSIONS.has(entry.extension)) {
+    const metadataPreview = entry.extension === ".docx"
+      ? "DOCX metadata only. Text extraction is not enabled in this phase."
+      : "PDF metadata only. Text extraction is not enabled in this phase.";
     return {
       chunks: [],
       document: {
         chunks: 0,
         id: documentId,
         inferredTags: [tag],
-        preview: "PDF metadata only. Text extraction is not enabled in this phase.",
+        preview: metadataPreview,
         relativePath: entry.relativePath,
         size: entry.stat.size,
         source: "local",
